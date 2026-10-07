@@ -159,18 +159,41 @@ Reading so far, honestly stated (numbers revised after audit, 2026-10-07):
   the pilot under-abstains out-of-domain; the 26/400 ambiguous labels put a
   ±few-point uncertainty band on this probe either way.
 
-## 6b. Final comparison (identical IDs/options, full budgets)
+## 6b. Final comparison (identical IDs/options, full budgets, policies per backend)
 
-Pending: final-model eval (kernel v9) + baselines rerun on the same full
-eval sets (tfidf closed, tfidf_lr_none, laya, gliner via isolated venv).
+Backends: tfidf_lr (closed world), tfidf_lr_none (trainable reject on CLINC
+OOS train), laya zero-shot, mokka = our v0.1 final. GLiNER2.5: `not_run`
+(two isolated-env attempts failed on the Kaggle image; error recorded in
+kernel logs — venv ensurepip/transformers<5 incompatibility). Superscript
+risk/coverage at each backend's own cal_policy-fitted threshold.
 
-| Set (full budgets) | tfidf_lr | tfidf_lr_none | laya_zs | gliner_zs | mokka final |
-|---|---|---|---|---|---|
-| banking77_test_candidates (n=1000) | — | — | — | — | — |
-| banking77_test_full (n=1000) | — | — | — | — | — |
-| massive_test_candidates (n=1500) | — | — | — | — | — |
-| clinc_test_candidates (n=800) | — | — | — | — | — |
-| clinc_oos_test (n=400) | — | — | — | — | — |
-| xprobe (n=400) | — | — | — | — | — |
+| Set | tfidf_lr | tfidf_lr_none | laya_zs | **mokka (ours)** |
+|---|---|---|---|---|
+| banking candidates (n=1000) | .984 / r.016 | .977 / r.023 | .725 | **.986 / r.014** |
+| banking full-77 (n=1000) | **.874 / r.088** | .874 / r.088 | .390 | .812 / r.174 |
+| massive candidates (n=1500) | .962 / r.036 | .931 / r.061 | .545 | **.969 / r.031** |
+| clinc candidates (n=800) | **.989 / r.008** | .971 / r.029 | .936 | .978 / r.023 |
+| clinc OOS none (n=400) | .000 (struct.) | .890 / r.106 | **.985** / cov .82 | .932 / r.068 |
+| xprobe none (n=400) | .000 (struct.) | **.963 / r.038** | .815 / cov .40 | .785 / r.215 |
+| xprobe clean (n=374, sin 26 ambiguas) | .000 | **.963 / r.038** | .816 | .778 / r.222 |
 
-Verdict: pending full-model pass + comparators.
+Honest reading (v0.1 final):
+
+- **our model wins** the two candidate-set scenarios with the best
+  calibration (ECE .010/.011) and the lowest neural-backend latency
+  (p50 22–26 ms GPU vs laya 43 ms);
+- **tfidf_lr wins** fixed-taxonomy 77-way (by 6.2 pp) and clinc candidates;
+- **tfidf_lr_none wins** cross-domain OOS decisively (xprobe .963 vs our
+  .785): a linear classifier with a *trained* reject generalises
+  out-of-domain better than our scorer — an important negative result for
+  us, now measured rather than assumed;
+- laya zero-shot is the strongest on in-distribution-style OOS (clinc
+  .985) but collapses on banking/massive candidates and needs thr .995 to
+  hold 17 % risk at 51 % coverage (poor calibration);
+- latency note: tfidf p50 ≈ 75–80 ms here is CPU-in-kernel (Kaggle vCPU),
+  ours is GPU; not a single-hardware comparison — the local CPU number
+  (0.4 ms) is the fair CPU reference.
+
+Verdict (per scenario): candidate-sets EN/DE/ES `qualified`; fixed-taxonomy
+`experimental` (behind linear); cross-domain OOS `experimental` (behind
+tfidf_lr_none); clinc-OOS `qualified-with-notes` (behind laya zero-shot).

@@ -1,6 +1,6 @@
 {
-  "id": "gjusev/mokka-decisions-pilot",
-  "title": "Mokka Decisions pilot",
+  "id": "gjusev/mokka-decisions-comparators",
+  "title": "mokka-decisions-comparators",
   "code_file": "run.py",
   "language": "python",
   "kernel_type": "script",
@@ -8,8 +8,7 @@
   "enable_gpu": true,
   "enable_internet": true,
   "dataset_sources": [
-    "gjusev/mokka-decisions-bundle",
-    "gjusev/mokka-decisions-checkpoint"
+    "gjusev/mokka-decisions-bundle"
   ],
   "machine_shape": "NvidiaTeslaT4"
 }
