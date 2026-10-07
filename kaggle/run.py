@@ -440,6 +440,22 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
             except Exception as exc:
                 log(f"{name} / gliner25 worker failed: {exc}")
 
+    # fair selective comparison: each baseline gets its own threshold fitted
+    # on cal_policy (the same split and target the final model uses)
+    try:
+        from mokka_decisions.policy import pick_threshold, risk_coverage_curve
+
+        cal_p = load_cases(find_file(bundle, "data/processed/v1/instances/cal_policy.jsonl"))
+        thresholds = {}
+        for backend in backends:
+            probs = [backend.decide([c])[0].probabilities for c in cal_p]
+            pol = pick_threshold(cal_p, probs, target_risk=0.05)
+            thresholds[backend.name] = pol
+            log(f"policy {backend.name}: thr={pol['threshold']} risk={pol['risk']} cov={pol['coverage']}")
+        (work / "baseline_policies.json").write_text(json.dumps(thresholds, indent=2), encoding="utf-8")
+    except Exception as exc:
+        log(f"baseline policy fitting failed: {exc}")
+
     (work / "run_status.json").write_text(
         json.dumps({"stage": "baselines", "backends": [b.name for b in backends]}, indent=2),
         encoding="utf-8",
