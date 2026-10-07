@@ -96,6 +96,16 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 - Implicación: A1 (marcadores, ya implementada) es el experimento correcto siguiente; mismo datos, receta igual → aísla arquitectura.
 - Artefactos: `runs/kaggle-typed-arms-final/` (json por brazo + pesos).
 
-## E10 — typed_a1 (kernel mokka-typed-a1, en ejecución)
+## E10 — typed_a1 (kernel mokka-typed-a1) — COMPLETADO: resultado NEGATIVO
 
-- MarkerScorer (una secuencia por decisión) sobre mmBERT-base, typed-train, misma receta; test con adaptador congelado; mide longitud de secuencia, pasos/s y comportamiento ante permutación.
+- MarkerScorer (una secuencia por decisión, marcadores [O_i], mmBERT-base) con mismos datos, inicialización y receta que A0 base_fresh.
+- Curva dev: 0,5123 / 0,5912 / 0,5930 — claramente por detrás de A0 (0,614/0,625/0,663) en cada época.
+- **Test: 0,5345 (1.069/2.000)** — choice 0,498 · noul 0,708 · score 0,431. A0 fue 0,678 → **A1 es −14,4 pp peor**. Cero truncamientos (0 casos perdidos).
+- Latencia p50 342 ms/pregunta (GPU, batch 8 amortizado; no comparable directamente con el 317 ms CPU de A0 batch=1 — medición conjunta pendiente si la rama sobreviviera).
+- **Interpretación**: la arquitectura de marcadores tal cual NO explica la ventaja de Julia; empeora con nuestra receta. La brecha restante de A0 vs Julia (−4,8 pp) apunta a receta/pérdidas/datos de entrenamiento (H1: pérdida ordinal; después: épocas/LR si hiciera falta), no a «una sola secuencia».
+- Hipótesis A1 DESCARTADA con esta configuración; código y pesos conservados (runs/kaggle-typed-a1/). Sesión cancelada al confirmar completado para preservar cuota (total ≈ 5 h wall).
+
+## E11 — typed_ord / H1 (kernel mokka-typed-ord, en ejecución)
+
+- Hipótesis: las confusiones ordinales adyacentes confiadas (diagnóstico dev K4: 0,628, errores p≈0,7–0,95 entre niveles vecinos) se corrigen con objetivo unimodal (soft targets, tau=1) en filas score.
+- Control: base_fresh (misma semilla/receta/datos); selección en dev por accuracy score y MAE.
