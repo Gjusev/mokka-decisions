@@ -52,6 +52,7 @@ def main() -> int:
     parser.add_argument("--data", default="data/processed/v1")
     parser.add_argument("--bundle", default="kaggle-bundle")
     parser.add_argument("--checkpoint", default=None, help="build a checkpoint-transport bundle instead")
+    parser.add_argument("--mm-dir", default=None, help="include a multimodal dataset dir as mm/")
     args = parser.parse_args()
 
     bundle = Path(args.bundle)
@@ -85,6 +86,11 @@ def main() -> int:
         if not (data / "instances").exists():
             raise SystemExit(f"no prepared data under {data}; run scripts/prepare_data.py first")
         shutil.copytree(data, bundle / "data" / "processed" / "v1")
+        if args.mm_dir:
+            mm = Path(args.mm_dir)
+            if not (mm / "manifest.json").exists():
+                raise SystemExit(f"no mm manifest under {mm}")
+            shutil.copytree(mm, bundle / "mm")
         (bundle / "dataset-metadata.json").write_text(
             json.dumps(
                 {

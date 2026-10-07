@@ -353,8 +353,10 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
     """Comparators on the same eval sets. TF-IDF trains on the train split
     (fixed taxonomy); laya and gliner run zero-shot. No model of ours needed."""
     require_gpu()
+    # laya only: it coexists with transformers 5.x (verified in v8).
+    # gliner2 goes EXCLUSIVELY to the isolated venv below — never here.
     subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "--quiet", "laya>=0.3", "gliner2[local]>=2.0"]
+        [sys.executable, "-m", "pip", "install", "--quiet", "laya>=0.3"]
     )
     from mokka_decisions.backends.laya import LayaBackend
     from mokka_decisions.backends.linear import LinearBackend, LinearRejectBackend
@@ -465,7 +467,7 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--stage", default="train,eval",
+        "--stage", default="baselines",
         help="comma-separated stages: smoke,train,resume_test,eval,baselines",
     )
     parser.add_argument("--config", default="configs/train.yaml")  # bundle v1 carries pilot-budget data
@@ -485,6 +487,9 @@ def main() -> None:
         "eval": stage_eval,
         "baselines": stage_baselines,
     }
+    from mm_pilot import STAGES as MM_STAGES
+
+    stages.update(MM_STAGES)
     completed = []
     for stage_name in [s.strip() for s in args.stage.split(",") if s.strip()]:
         if stage_name not in stages:

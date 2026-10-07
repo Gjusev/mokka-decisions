@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-julia/
 venv/
 .pytest_cache/
 .mypy_cache/
@@ -55,3 +56,6 @@ PROMPT_GLM53.md
 /docs/internal/
 /docs/status.md
 /docs/decisions.md
+
+# generated synthetic multimodal dataset (rebuild with scripts; deterministic)
+data/mm-v1/

@@ -49,8 +49,24 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
   Parche: instalar `gliner2[local]` + `transformers<5` contenido en la sesión
   del kernel después de construir Laya; reintento tras el run final.
 
-## E6 — Full-budget train + eval (kernel v9, en ejecución)
+## E6 — Full-budget train + eval (kernel v9) — COMPLETADO
 
-- train.yaml: 16.784 instancias, 3 épocas, mismo resto de receta; eval
-  (temperatura, umbral, test completo, permutación) en la misma sesión.
-  data_hash `a029d9662fc04a99` (bundle v3).
+- Receta train.yaml: 16.784 instancias, 3 épocas; mejor época 2; 1.575 pasos;
+  dev_eval (1.200) acc 0,9683 / NLL 0,148. data_hash `a029d9662fc04a99`.
+- Temperatura 2,349 (cal_temperature n=4.088). Métricas v2 (Brier multiclase).
+- Test completo (full budgets): banking candidatos **0,9860** (TF-IDF 0,984 —
+  ahora por delante) · massive 0,9687 con de/en/es = 0,9668/0,9681/0,9709
+  (equilibrado) · clinc 0,9775 · 77-vías 0,8120 (TF-IDF 0,872 — sigue detrás)
+  · clinc_oos 0,9325 (FA 6,75 %) · xprobe 0,7850 (FA 20,75 %) · permutación
+  0/500 flips · ECE 0,005–0,150 (máximo en xprobe).
+- Selección en test con la política de cal_policy: riesgo 1,4–3,1 % en los
+  cuatro escenarios de candidatos (objetivo ≤5 % cumplido ahí), 17,4 % en
+  77-vías y 21,5 % en xprobe — fuera del alcance validado, documentado.
+- Artifacts: `runs/kaggle-final/` (model_best.safetensors, calibration.json,
+  eval_results.json, policy.json, rows/).
+
+## E7 — Comparadores finales sobre IDs idénticos (kernel v10, en ejecución)
+
+- tfidf cerrado + tfidf_lr_none (rechazo entrenado) + laya + gliner (venv
+  aislado con transformers<5) sobre los mismos eval sets completos; umbral
+  propio por baseline ajustado en cal_policy (riesgo objetivo 5 %).
