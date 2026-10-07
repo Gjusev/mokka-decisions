@@ -70,3 +70,25 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 - tfidf cerrado + tfidf_lr_none (rechazo entrenado) + laya + gliner (venv
   aislado con transformers<5) sobre los mismos eval sets completos; umbral
   propio por baseline ajustado en cal_policy (riesgo objetivo 5 %).
+
+
+## E8 — typed-decisions zero-shot (protocolo congelado v1.0)
+
+- Adaptador conforme (json.dumps como julia/data.py, max_length 512, T=1.0,
+  batch 1-vs-16 verificado 0 discrepancias, censo completo p99=530 tokens con
+  121/7.100 pares truncados, latencia por fila): **0,372 (744/2.000)**
+  — choice 0,305 · noul 0,505 · score 0,3225 (MAE esperado 0,944) · NLL 1,38.
+- Run previo con settings no conformes (str(), 256, T=2,349): 0,3615 — conservado
+  y etiquetado. **Atribución: el adaptador explica ~1 pp; el resto es
+  distribución de entrenamiento/dominio** (nunca visto el formato tipado).
+- Referencia: Julia reproducida 0,7255 (entrenada en este estilo; presupuestos
+  de adaptación distintos, comparación directa no válida).
+- Latencia CPU p50 317 ms / p95 366 ms por pregunta (mmBERT-base, K variable).
+- Artefactos: `runs/typed-decisions/mokka-base-protocol/`.
+
+## E9 — typed-decisions brazos adaptados (kernel mokka-typed-arms, en ejecución)
+
+- Mismos datos typed-train (4.950/570/480) para tres brazos: base_fresh,
+  base_init (desde nuestro checkpoint de routing), small_fresh (~140M,
+  comparación equal-size/equal-data con Julia-1 144,3M).
+- Evaluación con el adaptador congelado sobre el test pineado.
