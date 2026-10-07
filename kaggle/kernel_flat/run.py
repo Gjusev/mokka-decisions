@@ -493,7 +493,7 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--stage", default="typed_ord",
+        "--stage", default="typed_small_ord",
         help="comma-separated stages: smoke,train,resume_test,eval,baselines",
     )
     parser.add_argument("--config", default="configs/train.yaml")  # bundle v1 carries pilot-budget data
@@ -1413,7 +1413,91 @@ def stage_typed_ord(bundle: Path, work: Path, config: str) -> None:
     )
 
 
-TYPED_STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1, "typed_ord": stage_typed_ord}
+def stage_typed_small_ord(bundle: Path, work: Path, config: str) -> None:
+    """Recipe transfer: the dev-winning ordinal loss on mmBERT-small.
+
+    Equal-parameter comparison vs Julia-1 (140M vs 144M) with the recipe that
+    won on Base. Same data, seed and protocol as small_fresh (control).
+    """
+    import time as _time
+
+    import torch
+
+    if not torch.cuda.is_available():
+        raise SystemExit("typed_small_ord needs the GPU that was not assigned")
+    root = _find_typed_root(bundle)
+    train = _load(root, "train")
+    dev = _load(root, "dev")
+    import json as _json
+
+    ordinal_ids = {
+        _json.loads(line)["id"]
+        for line in (root / "cases" / "train.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip() and _json.loads(line).get("question_type") == "score"
+    }
+    log(f"small_ord: train={len(train)} dev={len(dev)} ordinal={len(ordinal_ids)}")
+
+    from mokka_decisions.train import TrainConfig, run_training
+    from transformers import AutoTokenizer
+
+    cfg = TrainConfig(
+        encoder_name="jhu-clsp/mmBERT-small",
+        max_length=512, microbatch=4, grad_accumulation=8, epochs=4,
+        encoder_lr=2e-5, head_lr=1e-4, seed=42, amp=True,
+        output_dir=str(work / "small_ord"), max_options_per_step=32,
+    )
+    tokenizer = AutoTokenizer.from_pretrained("jhu-clsp/mmBERT-small")
+    t0 = _time.time()
+    report = run_training(
+        cfg, train_cases=train, dev_cases=dev, tokenizer=tokenizer,
+        ordinal_case_ids=ordinal_ids, ordinal_tau=1.0,
+    )
+    log(f"small_ord trained in {_time.time()-t0:.0f}s best_dev={report['best_dev_accuracy']}")
+
+    # dev by type
+    import collections
+
+    dev_rows = [_json.loads(l) for l in (root / "cases" / "dev.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    types = {r["id"]: r.get("question_type", "?") for r in dev_rows}
+    from mokka_decisions.model import OptionScorer, load_checkpoint, ScorerInference
+    from safetensors.torch import load_file
+
+    m = OptionScorer("jhu-clsp/mmBERT-small")
+    load_checkpoint(m, work / "small_ord" / "checkpoint_best.safetensors")
+    sc = ScorerInference(m, tokenizer, device="cuda", temperature=1.0, max_length=512, batch_decisions=16)
+    typed_dev = [c for c in dev if c.target_option]
+    probs = sc.score(typed_dev)
+    stats = collections.defaultdict(lambda: dict(n=0, ok=0))
+    mae = n_mae = 0
+    for c, p_ in zip(typed_dev, probs):
+        pred = max(p_, key=p_.get)
+        qt = types.get(c.id, "?")
+        stats[qt]["n"] += 1
+        stats[qt]["ok"] += int(pred == c.target_option)
+        if qt == "score":
+            idx = c.option_ids.index(c.target_option)
+            ev = sum(i * p_[oid] for i, oid in enumerate(c.option_ids))
+            mae += abs(ev - idx)
+            n_mae += 1
+    result = {
+        "arm": "small_ord",
+        "hypothesis": "ordinal-loss recipe transfers from Base to Small",
+        "control": "small_fresh (dev 0.6386, test 0.5345)",
+        "best_dev_accuracy": report["best_dev_accuracy"],
+        "dev_by_type": {k: {"acc": v["ok"] / v["n"], "n": v["n"]} for k, v in stats.items()},
+        "dev_score_mae": mae / n_mae if n_mae else None,
+        "history": report["history"],
+    }
+    (work / "typed_small_ord_results.json").write_text(_json.dumps(result, indent=2), encoding="utf-8")
+    log(f"small_ord dev by type: {result['dev_by_type']} mae={result['dev_score_mae']}")
+    (work / "run_status.json").write_text(
+        _json.dumps({"stage": "typed_small_ord", "best_dev": report["best_dev_accuracy"]}, indent=2),
+        encoding="utf-8",
+    )
+
+
+TYPED_STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1,
+          "typed_ord": stage_typed_ord, "typed_small_ord": stage_typed_small_ord}
 
 # ==== embedded: gliner worker source (runs inside the isolated venv) ====
 GLINER_WORKER_SRC = "\"\"\"GLiNER2.5 worker: runs INSIDE an isolated venv (its own transformers<5).\n\nProtocol (argv): cases.jsonl rows_out.jsonl\nReads decision cases, writes BackendRow JSONL. Kept dependency-free of the\nmain kernel env: the parent installs this venv with the mokka wheel +\ngliner2[local] + transformers<5, then invokes this file with that venv's\npython. The main environment (trainer, future VLMs) stays untouched.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport sys\nimport time\nfrom pathlib import Path\n\n\ndef main() -> int:\n    cases_path, out_path = Path(sys.argv[1]), Path(sys.argv[2])\n    sys.path.insert(0, str(Path(__file__).parent))\n\n    from mokka_decisions.backends.gliner import GlinerBackend\n    from mokka_decisions.contracts import DecisionCase\n    from mokka_decisions.evaluate import run_backend\n\n    cases = [DecisionCase.from_dict(json.loads(ln)) for ln in cases_path.read_text(encoding=\"utf-8\").splitlines() if ln.strip()]\n    t0 = time.time()\n    backend = GlinerBackend()\n    try:\n        import torch\n\n        if torch.cuda.is_available():\n            backend.model = backend.model.cuda().eval()\n            print(\"[gliner-worker] running on GPU\", flush=True)\n    except Exception as exc:\n        print(f\"[gliner-worker] GPU unavailable ({exc}); CPU mode\", flush=True)\n    rows = run_backend(backend, cases)\n    out_path.parent.mkdir(parents=True, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\\n\") as fh:\n        for row in rows:\n            fh.write(json.dumps(row.to_dict(), ensure_ascii=False, sort_keys=True) + \"\\n\")\n    errors = sum(1 for r in rows if r.error)\n    print(f\"[gliner-worker] {len(cases)} cases in {time.time()-t0:.0f}s, errors={errors}\", flush=True)\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
