@@ -48,7 +48,18 @@ def load_rows(path: Path) -> list[BackendRow]:
 
 
 def backend_of(path: Path) -> str:
-    return path.stem  # convention: <set>_<backend>.jsonl
+    """Backend identity comes FROM THE ROWS (row.backend), not the filename.
+
+    Reads the file, validates a single backend name throughout, and returns
+    it — filenames are conventions, rows are evidence.
+    """
+    names = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            names.add(json.loads(line).get("backend", ""))
+    if len(names) != 1 or not names:
+        raise SystemExit(f"{path}: expected exactly one backend in rows, got {sorted(names)}")
+    return names.pop()
 
 
 def set_of(path: Path) -> str:
@@ -102,6 +113,17 @@ def main() -> int:
         cases = [DecisionCase.from_dict(json.loads(ln)) for ln in eval_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
         case_ids = [c.id for c in cases]
         set_report = {}
+        # options-equality guard: identical IDs alone do not prove identical
+        # inputs; compare option id+description hashes per case
+        from hashlib import sha256 as _sha256
+
+        def options_hash(case):
+            payload = json.dumps(
+                [(o.id, o.description) for o in case.options], ensure_ascii=False
+            )
+            return _sha256(payload.encode()).hexdigest()
+
+        case_opt_hashes = {c.id: options_hash(c) for c in cases}
         for backend_name, rows_file in sorted(by_set[set_name].items()):
             rows = load_rows(rows_file)
             ids = [r.case_id for r in rows]
@@ -111,14 +133,32 @@ def main() -> int:
                     "note": "not directly comparable (different sample)",
                 }
                 continue
+            case_by_id = {c.id: c for c in cases}
+            opt_mismatch = sum(
+                1 for r in rows
+                if r.probabilities
+                and len(r.probabilities) != len(case_by_id[r.case_id].options)
+            )
             threshold = None
+            if policies and backend_name not in policies:
+                raise SystemExit(
+                    f"{set_name}/{backend_name}: no policy provided — refusing to "
+                    "compute selective metrics with an implicit threshold"
+                )
             if backend_name in policies:
                 threshold = policies[backend_name].get("threshold")
             s = summarize(rows, cases, threshold=threshold)
             s["by_language"] = summarize_by(rows, cases, "language", threshold=threshold)
             s["bootstrap"] = bootstrap_accuracy_ci(rows, cases, n_boot=300)
             if any(c.target_option == "none" for c in cases):
-                s["oos"] = oos_false_acceptance(rows, cases, threshold=threshold or 0.0)
+                if threshold is None:
+                    raise SystemExit(
+                        f"{set_name}/{backend_name}: OOS metrics need the backend's "
+                        "own fitted threshold (none provided)"
+                    )
+                s["oos"] = oos_false_acceptance(rows, cases, threshold=threshold)
+            if opt_mismatch:
+                s["options_mismatch_rows"] = opt_mismatch
             set_report[backend_name] = s
 
         # xprobe ambiguity view: same metrics excluding exact-name collisions

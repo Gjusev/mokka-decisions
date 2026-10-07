@@ -1,6 +1,6 @@
 {
-  "id": "gjusev/mokka-decisions-pilot",
-  "title": "Mokka Decisions pilot",
+  "id": "gjusev/mokka-baselines",
+  "title": "Mokka Decisions comparators",
   "code_file": "run.py",
   "language": "python",
   "kernel_type": "script",

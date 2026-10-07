@@ -1,24 +1,25 @@
 """Export a self-contained release directory.
 
-Layout (everything needed for offline inference after first download)::
+Layout (offline-capable: architecture instantiated from the LOCAL config, our
+weights loaded directly — no Hugging Face cache or network at load time)::
 
     release/mokka-decisions-<tag>/
       model.safetensors      our trained weights (encoder fine-tuned + head)
-      model-meta.json        encoder id, config hash, epochs, dev metrics
+      encoder-config/        architecture config (local instantiation)
       tokenizer/             tokenizer files
+      model-meta.json        encoder id, config hash, epochs, dev metrics, provenance
       calibration.json       temperature + revision
       policy.json            threshold + stats
-      manifest.json          sha256 of every artifact + code revision
+      manifest.json          sha256 of every artifact (relative-path keys) + meta
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from pathlib import Path
 
-from .model import OptionScorer, ScorerInference, load_checkpoint
+from .model import OptionScorer, load_checkpoint
 
 
 def _sha256(path: Path) -> str:
@@ -47,13 +48,21 @@ def export_release(
 
     model = OptionScorer(encoder_name)
     load_checkpoint(model, checkpoint)
+    # architecture config saved locally so loading never touches the network
+    model.encoder.config.save_pretrained(out / "encoder-config")
     from safetensors.torch import save_file
 
     weights = out / "model.safetensors"
     save_file(dict(model.state_dict()), str(weights), metadata={"format": "pt"})
 
+    full_meta = {
+        "encoder": encoder_name,
+        "export": "mokka-decisions release",
+        "contract_version": "v1 (DecisionCase/DecisionResponse)",
+        **meta,
+    }
     (out / "model-meta.json").write_text(
-        json.dumps({"encoder": encoder_name, **meta}, indent=2, sort_keys=True), encoding="utf-8"
+        json.dumps(full_meta, indent=2, sort_keys=True), encoding="utf-8"
     )
     (out / "calibration.json").write_text(
         json.dumps(calibration, indent=2, sort_keys=True), encoding="utf-8"
@@ -64,11 +73,11 @@ def export_release(
 
     manifest = {
         "artifacts": {
-            p.name: {"sha256": _sha256(p), "bytes": p.stat().st_size}
+            str(p.relative_to(out)): {"sha256": _sha256(p), "bytes": p.stat().st_size}
             for p in sorted(out.rglob("*"))
             if p.is_file() and p.name != "manifest.json"
         },
-        "meta": meta,
+        "meta": full_meta,
     }
     (out / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
@@ -77,19 +86,38 @@ def export_release(
 
 
 def load_exported_model(model_dir: str | Path):
-    """Load (ScorerInference, policy) from an export directory; offline after
-    the encoder tokenizer/config are cached or shipped in tokenizer/."""
-    from transformers import AutoTokenizer
+    """Load (ScorerInference, policy) fully offline from an export dir.
+
+    The encoder architecture is instantiated from the LOCAL saved config and
+    our trained weights are loaded directly — ``from_pretrained`` on a hub id
+    is never called, so a fresh machine with an empty HF cache and no network
+    still loads.
+    """
+    from transformers import AutoConfig, AutoModel, AutoTokenizer
+
+    import torch
 
     model_dir = Path(model_dir)
     meta = json.loads((model_dir / "model-meta.json").read_text(encoding="utf-8"))
     calibration = json.loads((model_dir / "calibration.json").read_text(encoding="utf-8"))
     policy = json.loads((model_dir / "policy.json").read_text(encoding="utf-8"))
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_dir / "tokenizer", local_files_only=True
+    tokenizer = AutoTokenizer.from_pretrained(model_dir / "tokenizer", local_files_only=True)
+    config = AutoConfig.from_pretrained(model_dir / "encoder-config", local_files_only=True)
+    encoder = AutoModel.from_config(config)
+    from .model import OptionScorer
+
+    model = OptionScorer.__new__(OptionScorer)
+    torch.nn.Module.__init__(model)
+    model.encoder_name = meta.get("encoder", "")
+    model.encoder = encoder
+    hidden = encoder.config.hidden_size
+    import torch.nn as nn
+
+    model.head = nn.Sequential(
+        nn.Linear(hidden, hidden), nn.Tanh(), nn.Dropout(0.1), nn.Linear(hidden, 1)
     )
-    model = OptionScorer(meta["encoder"])
+    model.freeze_encoder = False
     load_checkpoint(model, model_dir / "model.safetensors")
     scorer = ScorerInference(
         model,
@@ -100,3 +128,6 @@ def load_exported_model(model_dir: str | Path):
     )
     scorer.model_revision = f"option-scorer@{meta.get('config_hash', '')[:12]}"
     return scorer, policy
+
+
+from .model import ScorerInference  # noqa: E402  (kept last: avoids import cycle at module top)
