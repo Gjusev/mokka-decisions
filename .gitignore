@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Credentials and machine-local configuration
+.env
+.env.*
+!.env.example
+kaggle.json
+.kaggle/
+secrets/
+*.pem
+*.key
+
+# Generated data, model artifacts, and experiment outputs
+data/raw/
+data/processed/
+runs/
+release/
+checkpoints/
+artifacts/
+.cache/
+wandb/
+mlruns/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.bin
+
+# Notebook and OS files
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local agent instructions and internal planning
+AGENTS.md
+PROMPT_GLM53.md
+/docs/GLM53_IMPLEMENTATION_HANDOFF.md
+/docs/research/
+/docs/internal/
+/docs/status.md
+/docs/decisions.md
