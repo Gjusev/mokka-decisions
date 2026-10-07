@@ -33,6 +33,12 @@ def strip_module_boilerplate(src: str) -> str:
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--id", default=None, help="kernel id (e.g. gjusev/mokka-typed-arms); remembered between builds")
+    parser.add_argument("--sources", nargs="*", default=None, help="dataset_sources override")
+    args, _unknown = parser.parse_known_args()
     run_src = (KAGGLE / "run.py").read_text(encoding="utf-8")
     mm_src = strip_module_boilerplate((KAGGLE / "mm_pilot.py").read_text(encoding="utf-8"))
     typed_src = strip_module_boilerplate((KAGGLE / "typed_pilot.py").read_text(encoding="utf-8"))
@@ -76,7 +82,23 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "run.py").write_text(flat, encoding="utf-8")
     meta = json.loads((KAGGLE / "kernel-metadata.json").read_text(encoding="utf-8"))
+    # remember the last id/sources used in kernel_flat so rebuilds never
+    # silently reset the target kernel (footgun that misrouted pushes before)
+    state_path = OUT / ".last-target.json"
+    if args.id:
+        meta["id"] = args.id
+        meta["title"] = args.id.split("/")[-1]
+    elif state_path.exists():
+        prev = json.loads(state_path.read_text(encoding="utf-8"))
+        meta["id"] = prev["id"]
+        meta["title"] = prev["title"]
+        if prev.get("dataset_sources") and args.sources is None:
+            meta["dataset_sources"] = prev["dataset_sources"]
+    if args.sources is not None:
+        meta["dataset_sources"] = args.sources
     (OUT / "kernel-metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    state_path.write_text(json.dumps({"id": meta["id"], "title": meta["title"],
+                                      "dataset_sources": meta.get("dataset_sources")}), encoding="utf-8")
 
     import ast
 

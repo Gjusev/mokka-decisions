@@ -48,11 +48,27 @@ Per language (massive candidates): de 0.967 / en 0.968 / es 0.971 — no weak
 language hidden in the average. Option-order permutation: **0 flips / 500**.
 Latency (T4, batch=1, K=6): p50 22–26 ms; 78-option decisions: p50 318 ms.
 
-Comparators on identical IDs/options: TF-IDF+LR (closed-world) banking
-candidates 0.984 / full-77 0.872; it cannot choose `none` by construction
-(`tfidf_lr_none` variant: see evaluation protocol). Laya zero-shot: banking
-candidates 0.725, clinc OOS 0.985, ECE up to 0.51. GLiNER2.5: pending final
-run (isolated env). Rows and per-backend policies: `runs/final-report/`.
+Comparators on identical IDs/options (full table in the evaluation protocol;
+rows and per-backend policies in `runs/final-report/`):
+
+- **TF-IDF+LR closed-world**: banking candidates 0.984, full-77 0.874, clinc
+  0.989 — wins fixed-taxonomy scenarios; cannot choose `none` (modelling
+  choice, not an inherent limit).
+- **TF-IDF+LR with trainable reject** (`tfidf_lr_none`): clinc OOS 0.890 and
+  cross-domain xprobe **0.963 at 3.8 % selective risk — beats us** (0.785 /
+  21.5 %): a linear classifier with a trained reject generalises
+  out-of-domain better than this model. Measured negative result, stated
+  plainly.
+- **Laya zero-shot**: strongest on clinc OOS (0.985 at 82 % coverage) but
+  collapses on banking/massive candidates (0.725/0.545) and its confidence
+  needs a 0.995 threshold for 17 % risk at 51 % coverage.
+- **GLiNER2.5**: `not_run` — two isolated-environment attempts failed on the
+  Kaggle image (venv ensurepip / transformers<5 conflicts). Errors recorded;
+  never presented as evaluated.
+
+Where this model wins: candidate-set decisions in all three languages with
+the best calibration (ECE 0.005–0.011) and the lowest neural latency
+(p50 22–26 ms on T4 for K=6), plus exact option-order invariance.
 
 ## Typed decisions (Julia-1 benchmark) — honest labelling
 
