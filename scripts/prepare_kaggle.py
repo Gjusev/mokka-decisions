@@ -70,7 +70,7 @@ def main() -> int:
                 {
                     "title": "mokka-decisions-checkpoint",
                     "id": "gjusev/mokka-decisions-checkpoint",
-                    "licenses": [{"name": "CC-BY-NC-SA-4.0"}],
+                    "licenses": [{"name": "CC-BY-4.0"}],
                 },
                 indent=2,
             ),
@@ -90,7 +90,7 @@ def main() -> int:
                 {
                     "title": "mokka-decisions-bundle",
                     "id": "gjusev/mokka-decisions-bundle",
-                    "licenses": [{"name": "CC-BY-NC-SA-4.0"}],
+                    "licenses": [{"name": "CC-BY-4.0"}],
                 },
                 indent=2,
             ),

@@ -73,8 +73,12 @@ class OptionScorer(nn.Module):
             pooled = outputs.last_hidden_state[:, 0]
         scores = self.head(pooled).squeeze(-1)  # (total_seqs,)
 
+        # finfo.min instead of -1e9: fp16 cannot represent -1e9 (max ~65504)
         logits = torch.full(
-            (num_decisions, max_options), -1e9, dtype=scores.dtype, device=scores.device
+            (num_decisions, max_options),
+            torch.finfo(scores.dtype).min,
+            dtype=scores.dtype,
+            device=scores.device,
         )
         logits[decision_index, option_slot] = scores
         return logits
