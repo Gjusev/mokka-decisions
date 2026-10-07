@@ -93,16 +93,46 @@ candidate, latency and explicit error. Failed cases stay in the denominator.
 
 ## 6. Results
 
-| Set | Backend | Forced acc | Macro-F1 | NLL | ECE | Coverage | Risk | Status |
-|---|---|---|---|---|---|---|---|---|
-| banking77_test_candidates | — | — | — | — | — | — | — | not_run |
-| banking77_test_full | — | — | — | — | — | — | — | not_run |
-| massive_test_candidates (en) | — | — | — | — | — | — | — | not_run |
-| massive_test_candidates (de) | — | — | — | — | — | — | — | not_run |
-| massive_test_candidates (es) | — | — | — | — | — | — | — | not_run |
-| clinc_test_candidates | — | — | — | — | — | — | — | not_run |
-| clinc_oos_test | — | — | — | — | — | — | — | not_run |
-| xprobe_massive_vs_clinc | — | — | — | — | — | — | — | not_run |
-| permutation probe | — | flips: — | | | | | | not_run |
+Pilot pass (pilot-budget data, pilot model, pilot eval budgets — the test sets
+were opened by this run; the full-model pass below repeats them and both are
+reported). Artifacts: `runs/local-baselines/` (tfidf), `runs/kaggle-eval/`
+(mokka pilot).
 
-Verdict: pending. Artifacts: `eval/rows/*.jsonl`, `eval_results.json`.
+| Set | Backend | Forced acc | Macro-F1 | NLL | ECE | Coverage | Risk | OOS false acc. | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| banking77_test_candidates (n=600) | tfidf_lr | 0.987 | 0.986 | — | — | — | — | n/a | run |
+| banking77_test_candidates (n=600) | mokka pilot | 0.970 | 0.969 | 0.086 | 0.011 | 1.000 | 0.030 | n/a | run |
+| banking77_test_full (n=600) | tfidf_lr | 0.865 | 0.865 | — | — | — | — | n/a | run |
+| banking77_test_full (n=600) | mokka pilot | 0.705 | 0.692 | 0.988 | 0.035 | 0.965 | 0.278 | n/a | run |
+| massive_test_candidates (n=900) | tfidf_lr | 0.960 | 0.940 | — | — | — | — | n/a | run |
+| massive_test_candidates (n=900) | mokka pilot | 0.954 | 0.924 | 0.113 | 0.015 | 1.000 | 0.046 | n/a | run |
+| clinc_test_candidates (n=500) | tfidf_lr | 0.988 | 0.988 | — | — | — | — | n/a | run |
+| clinc_test_candidates (n=500) | mokka pilot | 0.958 | 0.954 | 0.138 | 0.019 | 1.000 | 0.042 | n/a | run |
+| clinc_oos_test (n=300) | tfidf_lr | 0.000 | 0.000 | — | — | — | — | 1.000 (always picks an option) | run |
+| clinc_oos_test (n=300) | mokka pilot | 0.937 | — | 0.206 | 0.042 | 1.000 | 0.063 | 0.063 | run |
+| xprobe_massive_vs_clinc (n=300) | tfidf_lr | 0.000 | 0.000 | — | — | — | — | 1.000 | run |
+| xprobe_massive_vs_clinc (n=300) | mokka pilot | 0.797 | — | 0.844 | 0.141 | 0.997 | 0.204 | 0.203 | run |
+| permutation probe (n=500) | mokka pilot | 0 flips | | | | | | | run |
+
+Calibration (pilot): temperature 1.763 (cal_temperature n=4,088), threshold
+0.300 on cal_policy (n=4,280) → risk 3.86 % at 99.86 % coverage (target met).
+Pilot temperature was fitted on pilot-budget calibration splits.
+
+Laya / GLiNER2.5 rows: pending (kernel `baselines` running).
+Full-model pass (train.yaml budgets): pending.
+
+Reading so far, honestly stated:
+
+- candidate-set decisions: our model is 1–3 pp behind TF-IDF+LR with labels —
+  expected for a scorer vs a fixed classifier on its home turf;
+- the model's differentiator is real and measured: OOS `none`-selection 93.7 %
+  where TF-IDF structurally scores 0, and perfect option-order invariance
+  (0/500 flips);
+- the 77-way fixed-taxonomy scenario is the model's weakest (70.5 % vs 86.5 %):
+  training with K=4–8 candidate sets transfers imperfectly to 78-option
+  decisions — an honest limitation, improvable with full-taxonomy training
+  instances;
+- cross-domain OOS (xprobe) false acceptance 20.3 % is above the 5 % target —
+  the pilot model under-abstains on out-of-domain text in de/es.
+
+Verdict: pending full-model pass + comparators.

@@ -31,12 +31,18 @@ def log(msg: str) -> None:
 def find_bundle() -> Path:
     root = Path("/kaggle/input")
     if root.exists():
-        for path in root.rglob("BUNDLE_MANIFEST.json"):
-            bundle = path.parent
+        candidates = [p.parent for p in root.rglob("BUNDLE_MANIFEST.json")]
+        # prefer the full bundle (contains the wheel); checkpoint bundles also
+        # carry a manifest but no dist/
+        candidates.sort(key=lambda b: not any(b.rglob("*.whl")))
+        for bundle in candidates:
             listing = [str(p) for p in sorted(bundle.rglob("*")) if p.is_file()][:80]
-            log("bundle tree (first 80):\n  " + "\n  ".join(listing))
-            return bundle
-        listing = [str(p) for p in sorted(root.rglob("*")) if len(listing) < 60]
+            log(f"bundle candidate {bundle}:\n  " + "\n  ".join(listing))
+            if any(bundle.rglob("*.whl")):
+                return bundle
+        if candidates:
+            raise SystemExit("only checkpoint-style bundles found; attach the full bundle dataset")
+        listing = [str(p) for p in sorted(root.rglob("*"))][:60]
         raise SystemExit(
             "bundle dataset not found. /kaggle/input listing:\n" + "\n".join(listing)
         )
@@ -269,14 +275,21 @@ def stage_eval(bundle: Path, work: Path, config: str) -> None:
     from mokka_decisions.instances import permute_case
     from mokka_decisions.policy import pick_threshold, risk_coverage_curve, save_policy
 
+    # prefer a checkpoint trained in THIS session over any attached dataset
+    # (an attached old checkpoint must never shadow the fresh one)
     ckpt = None
-    for pattern in ("/kaggle/input/*/model_best.safetensors", "/kaggle/working/train/model_best.safetensors"):
-        hits = glob.glob(pattern)
+    for pattern in (
+        "/kaggle/working/model_best.safetensors",
+        "/kaggle/working/train/model_best.safetensors",
+        "/kaggle/input/*/model_best.safetensors",
+    ):
+        hits = sorted(glob.glob(pattern))
         if hits:
             ckpt = Path(hits[0])
             break
     if ckpt is None:
         raise SystemExit("no trained checkpoint found for eval stage")
+    log(f"eval checkpoint: {ckpt}")
 
     cfg_data = yaml.safe_load(find_file(bundle, config).read_text(encoding="utf-8"))
     eval_cfg = yaml.safe_load((find_file(bundle, "configs/evaluation.yaml")).read_text(encoding="utf-8"))["evaluation"]
@@ -340,6 +353,9 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
     """Comparators on the same eval sets. TF-IDF trains on the train split
     (fixed taxonomy); laya and gliner run zero-shot. No model of ours needed."""
     require_gpu()
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "--quiet", "laya>=0.3", "gliner2[local]>=2.0"]
+    )
     from mokka_decisions.backends.gliner import GlinerBackend
     from mokka_decisions.backends.laya import LayaBackend
     from mokka_decisions.backends.linear import LinearBackend
@@ -387,7 +403,10 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage", default="train", choices=["smoke", "train", "resume_test", "eval", "baselines"])
+    parser.add_argument(
+        "--stage", default="resume_test,baselines",
+        help="comma-separated stages: smoke,train,resume_test,eval,baselines",
+    )
     parser.add_argument("--config", default="configs/pilot.yaml")  # bundle v1 carries pilot-budget data
     args = parser.parse_args()
 
@@ -405,8 +424,24 @@ def main() -> None:
         "eval": stage_eval,
         "baselines": stage_baselines,
     }
-    stages[args.stage](bundle, work, args.config)
-    log("stage complete")
+    completed = []
+    for stage_name in [s.strip() for s in args.stage.split(",") if s.strip()]:
+        if stage_name not in stages:
+            raise SystemExit(f"unknown stage {stage_name!r}; known: {sorted(stages)}")
+        stages[stage_name](bundle, work, args.config)
+        completed.append(stage_name)
+        # preserve each stage verdict; run_status.json records the whole sequence
+        status_path = work / "run_status.json"
+        prev = {}
+        if status_path.exists():
+            try:
+                prev = json.loads(status_path.read_text(encoding="utf-8"))
+            except Exception:
+                prev = {}
+        prev["stages_completed"] = completed
+        prev["last_stage"] = stage_name
+        status_path.write_text(json.dumps(prev, indent=2), encoding="utf-8")
+    log(f"stages complete: {completed}")
 
 
 if __name__ == "__main__":

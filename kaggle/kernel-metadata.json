@@ -7,6 +7,6 @@
   "is_private": true,
   "enable_gpu": true,
   "enable_internet": true,
-  "dataset_sources": ["gjusev/mokka-decisions-bundle"],
+  "dataset_sources": ["gjusev/mokka-decisions-bundle", "gjusev/mokka-decisions-checkpoint"],
   "machine_shape": "NvidiaTeslaT4"
 }
