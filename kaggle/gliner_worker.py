@@ -26,6 +26,14 @@ def main() -> int:
     cases = [DecisionCase.from_dict(json.loads(ln)) for ln in cases_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     t0 = time.time()
     backend = GlinerBackend()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            backend.model = backend.model.cuda().eval()
+            print("[gliner-worker] running on GPU", flush=True)
+    except Exception as exc:
+        print(f"[gliner-worker] GPU unavailable ({exc}); CPU mode", flush=True)
     rows = run_backend(backend, cases)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8", newline="\n") as fh:

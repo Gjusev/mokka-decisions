@@ -387,6 +387,17 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
         wheel = sorted(bundle.rglob("*.whl"))[0]
         subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
                                str(wheel), "pyyaml", "safetensors"])
+        # CUDA torch in the venv when the kernel has a GPU (matches cu128);
+        # fall back to CPU torch otherwise
+        import torch as _torch
+
+        if _torch.cuda.is_available():
+            try:
+                subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
+                                       "torch==2.11.0", "--index-url",
+                                       "https://download.pytorch.org/whl/cu128"])
+            except Exception as exc:
+                log(f"cuda torch in venv failed ({exc}); gliner falls back to CPU")
         subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
                                "gliner2[local]>=2.0", "transformers<5"])
         gliner_ok = True

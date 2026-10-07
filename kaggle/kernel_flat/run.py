@@ -387,6 +387,17 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
         wheel = sorted(bundle.rglob("*.whl"))[0]
         subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
                                str(wheel), "pyyaml", "safetensors"])
+        # CUDA torch in the venv when the kernel has a GPU (matches cu128);
+        # fall back to CPU torch otherwise
+        import torch as _torch
+
+        if _torch.cuda.is_available():
+            try:
+                subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
+                                       "torch==2.11.0", "--index-url",
+                                       "https://download.pytorch.org/whl/cu128"])
+            except Exception as exc:
+                log(f"cuda torch in venv failed ({exc}); gliner falls back to CPU")
         subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
                                "gliner2[local]>=2.0", "transformers<5"])
         gliner_ok = True
@@ -1162,7 +1173,7 @@ def stage_typed_arms(bundle: Path, work: Path, config: str) -> None:
 TYPED_STAGES = {"typed_arms": stage_typed_arms}
 
 # ==== embedded: gliner worker source (runs inside the isolated venv) ====
-GLINER_WORKER_SRC = "\"\"\"GLiNER2.5 worker: runs INSIDE an isolated venv (its own transformers<5).\n\nProtocol (argv): cases.jsonl rows_out.jsonl\nReads decision cases, writes BackendRow JSONL. Kept dependency-free of the\nmain kernel env: the parent installs this venv with the mokka wheel +\ngliner2[local] + transformers<5, then invokes this file with that venv's\npython. The main environment (trainer, future VLMs) stays untouched.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport sys\nimport time\nfrom pathlib import Path\n\n\ndef main() -> int:\n    cases_path, out_path = Path(sys.argv[1]), Path(sys.argv[2])\n    sys.path.insert(0, str(Path(__file__).parent))\n\n    from mokka_decisions.backends.gliner import GlinerBackend\n    from mokka_decisions.contracts import DecisionCase\n    from mokka_decisions.evaluate import run_backend\n\n    cases = [DecisionCase.from_dict(json.loads(ln)) for ln in cases_path.read_text(encoding=\"utf-8\").splitlines() if ln.strip()]\n    t0 = time.time()\n    backend = GlinerBackend()\n    rows = run_backend(backend, cases)\n    out_path.parent.mkdir(parents=True, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\\n\") as fh:\n        for row in rows:\n            fh.write(json.dumps(row.to_dict(), ensure_ascii=False, sort_keys=True) + \"\\n\")\n    errors = sum(1 for r in rows if r.error)\n    print(f\"[gliner-worker] {len(cases)} cases in {time.time()-t0:.0f}s, errors={errors}\", flush=True)\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
+GLINER_WORKER_SRC = "\"\"\"GLiNER2.5 worker: runs INSIDE an isolated venv (its own transformers<5).\n\nProtocol (argv): cases.jsonl rows_out.jsonl\nReads decision cases, writes BackendRow JSONL. Kept dependency-free of the\nmain kernel env: the parent installs this venv with the mokka wheel +\ngliner2[local] + transformers<5, then invokes this file with that venv's\npython. The main environment (trainer, future VLMs) stays untouched.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport sys\nimport time\nfrom pathlib import Path\n\n\ndef main() -> int:\n    cases_path, out_path = Path(sys.argv[1]), Path(sys.argv[2])\n    sys.path.insert(0, str(Path(__file__).parent))\n\n    from mokka_decisions.backends.gliner import GlinerBackend\n    from mokka_decisions.contracts import DecisionCase\n    from mokka_decisions.evaluate import run_backend\n\n    cases = [DecisionCase.from_dict(json.loads(ln)) for ln in cases_path.read_text(encoding=\"utf-8\").splitlines() if ln.strip()]\n    t0 = time.time()\n    backend = GlinerBackend()\n    try:\n        import torch\n\n        if torch.cuda.is_available():\n            backend.model = backend.model.cuda().eval()\n            print(\"[gliner-worker] running on GPU\", flush=True)\n    except Exception as exc:\n        print(f\"[gliner-worker] GPU unavailable ({exc}); CPU mode\", flush=True)\n    rows = run_backend(backend, cases)\n    out_path.parent.mkdir(parents=True, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\\n\") as fh:\n        for row in rows:\n            fh.write(json.dumps(row.to_dict(), ensure_ascii=False, sort_keys=True) + \"\\n\")\n    errors = sum(1 for r in rows if r.error)\n    print(f\"[gliner-worker] {len(cases)} cases in {time.time()-t0:.0f}s, errors={errors}\", flush=True)\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
 
 if __name__ == "__main__":
     main()
