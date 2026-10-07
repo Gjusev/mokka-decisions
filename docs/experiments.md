@@ -86,9 +86,16 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 - Latencia CPU p50 317 ms / p95 366 ms por pregunta (mmBERT-base, K variable).
 - Artefactos: `runs/typed-decisions/mokka-base-protocol/`.
 
-## E9 — typed-decisions brazos adaptados (kernel mokka-typed-arms, en ejecución)
+## E9 — typed-decisions brazos adaptados (kernel mokka-typed-arms v4) — COMPLETADO
 
-- Mismos datos typed-train (4.950/570/480) para tres brazos: base_fresh,
-  base_init (desde nuestro checkpoint de routing), small_fresh (~140M,
-  comparación equal-size/equal-data con Julia-1 144,3M).
-- Evaluación con el adaptador congelado sobre el test pineado.
+- Mismos datos typed-train (4.950/570/480), adaptador congelado, test pineado:
+  - **base_fresh** (307M): dev 0,6912 · **test 0,678** (1.356/2.000) — choice 0,685 · noul 0,758 · score 0,6125 (MAE 0,558).
+  - **small_fresh** (140M): dev 0,6386 · **test 0,5345** (1.069/2.000) — choice 0,518 · noul 0,677 · score 0,440 (MAE 0,784).
+  - base_init saltado (glob de checkpoint no cubría la ruta anidada del montaje; corregido con rglob).
+- **Lectura causal**: zero-shot 0,372 → adaptado 0,678 (+30,6 pp con nuestros datos) — el gap zero-shot era de ENTRENAMIENTO. El gap restante vs Julia reproducida (0,7255): −4,8 pp con Base y **−19,1 pp con igual tamaño (140M vs 144M)** — es de ARQUITECTURA/RECETA (Julia: secuencia única con marcadores + cabezas tipadas; nuestro A0 repite K pares sin tipo).
+- Implicación: A1 (marcadores, ya implementada) es el experimento correcto siguiente; mismo datos, receta igual → aísla arquitectura.
+- Artefactos: `runs/kaggle-typed-arms-final/` (json por brazo + pesos).
+
+## E10 — typed_a1 (kernel mokka-typed-a1, en ejecución)
+
+- MarkerScorer (una secuencia por decisión) sobre mmBERT-base, typed-train, misma receta; test con adaptador congelado; mide longitud de secuencia, pasos/s y comportamiento ante permutación.
