@@ -32,6 +32,8 @@ artifacts/
 .cache/
 wandb/
 mlruns/
+kaggle-bundle/
+kaggle-checkpoint/
 *.safetensors
 *.pt
 *.pth

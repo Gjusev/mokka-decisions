@@ -1,0 +1,29 @@
+# Full run: the model we ship.
+data:
+  budgets:
+    banking77: 6000
+    massive: 7500     # ~2500 per locale
+    clinc: 3000
+  clinc_oos_budget: 800
+  eval_budgets:
+    banking77: 1000
+    massive: 1500     # ~500 per locale
+    clinc: 800
+    clinc_oos: 400
+    banking_full: 1000
+    xprobe: 400
+    dev: 1200
+
+train:
+  encoder_name: jhu-clsp/mmBERT-base
+  max_length: 256
+  microbatch: 4
+  grad_accumulation: 8
+  epochs: 3
+  encoder_lr: 2.0e-5
+  head_lr: 1.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  seed: 42
+  amp: true
+  output_dir: runs/train-v1

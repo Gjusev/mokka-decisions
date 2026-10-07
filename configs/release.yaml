@@ -1,0 +1,11 @@
+# Local release packaging (no publishing step runs automatically).
+release:
+  tag: v0.1.0
+  export_dir: release/mokka-decisions-v0.1.0
+  include:
+    - model.safetensors
+    - tokenizer
+    - calibration.json
+    - policy.json
+    - model-meta.json
+    - manifest.json

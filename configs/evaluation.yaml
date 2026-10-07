@@ -1,0 +1,13 @@
+# Evaluation + calibration: what runs at test time, in which order.
+evaluation:
+  target_risk: 0.05          # selective risk target for threshold picking
+  bootstrap_n: 1000
+  ece_bins: 15
+  permutation_probe_n: 500   # cases re-scored with permuted options
+  latency_batch_sizes: [1, 8, 32]
+
+backends:                    # which comparators run (absent ones stay marked not_run)
+  - tfidf_lr
+  - mokka_option_scorer
+  - laya_multilingual_zero_shot
+  - gliner25_multilingual_zero_shot

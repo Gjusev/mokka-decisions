@@ -1,0 +1,29 @@
+# Pilot: pipeline validation run (small budgets, short training).
+data:
+  budgets:            # per source, train split (subsample is deterministic)
+    banking77: 2500
+    massive: 3600     # ~1200 per locale (en/de/es mixed by hash)
+    clinc: 1500       # in-scope only
+  clinc_oos_budget: 400
+  eval_budgets:
+    banking77: 600
+    massive: 900      # ~300 per locale
+    clinc: 500
+    clinc_oos: 300
+    banking_full: 600
+    xprobe: 300
+    dev: 800
+
+train:
+  encoder_name: jhu-clsp/mmBERT-base
+  max_length: 256
+  microbatch: 4
+  grad_accumulation: 8
+  epochs: 2
+  encoder_lr: 2.0e-5
+  head_lr: 1.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  seed: 42
+  amp: true
+  output_dir: runs/pilot

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mokka-decisions"
+version = "0.1.0"
+description = "A small open decision model: state + question + option descriptions -> calibrated probabilities, choice and abstention over EN/DE/ES intents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Gjusev" }]
+keywords = ["decision-model", "system-one", "intent", "multilingual", "abstention"]
+dependencies = [
+  "pyyaml>=6",
+  "safetensors>=0.4",
+]
+
+[project.optional-dependencies]
+data = ["datasets>=2.20", "pandas>=2"]
+train = [
+  "torch>=2.1",
+  "transformers>=4.44",
+  "sentencepiece>=0.2",
+  "accelerate>=0.30",
+]
+baselines = ["scikit-learn>=1.4", "gliner>=0.2", "laya>=0.3"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+mokka = "mokka_decisions.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mokka_decisions"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+markers = [
+  "slow: needs real model weights or network; opt in with -m slow",
+  "gpu: needs a CUDA device",
+]
+addopts = "-m 'not slow and not gpu'"
