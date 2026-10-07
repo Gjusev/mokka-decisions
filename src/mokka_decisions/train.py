@@ -75,6 +75,7 @@ class TrainConfig:
     log_every_steps: int = 20
     output_dir: str = "runs/train"
     max_options_per_step: int = 12  # skip train cases with more options (none by construction)
+    init_from: str = ""  # optional safetensors checkpoint to initialise encoder+head before training
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -185,7 +186,13 @@ def run_training(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     set_seed(cfg.seed)
 
-    model = OptionScorer(cfg.encoder_name, freeze_encoder=cfg.freeze_encoder).to(device)
+    model = OptionScorer(cfg.encoder_name, freeze_encoder=cfg.freeze_encoder)
+    if cfg.init_from:
+        from .model import load_checkpoint
+
+        load_checkpoint(model, cfg.init_from)
+        print(f"[init] encoder+head initialised from {cfg.init_from}")
+    model = model.to(device)
 
     steps_per_epoch = math.ceil(len(train_cases) / (cfg.microbatch * cfg.grad_accumulation))
     total_steps = max(steps_per_epoch * cfg.epochs, 1)

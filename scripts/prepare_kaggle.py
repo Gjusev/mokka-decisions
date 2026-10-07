@@ -53,6 +53,7 @@ def main() -> int:
     parser.add_argument("--bundle", default="kaggle-bundle")
     parser.add_argument("--checkpoint", default=None, help="build a checkpoint-transport bundle instead")
     parser.add_argument("--mm-dir", default=None, help="include a multimodal dataset dir as mm/")
+    parser.add_argument("--typed-dir", default=None, help="include typed-decisions train dir as typed-v1/")
     args = parser.parse_args()
 
     bundle = Path(args.bundle)
@@ -91,6 +92,11 @@ def main() -> int:
             if not (mm / "manifest.json").exists():
                 raise SystemExit(f"no mm manifest under {mm}")
             shutil.copytree(mm, bundle / "mm")
+        if args.typed_dir:
+            td = Path(args.typed_dir)
+            if not (td / "manifest.json").exists():
+                raise SystemExit(f"no typed manifest under {td}")
+            shutil.copytree(td, bundle / "typed-v1")
         (bundle / "dataset-metadata.json").write_text(
             json.dumps(
                 {

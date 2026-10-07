@@ -35,6 +35,7 @@ def strip_module_boilerplate(src: str) -> str:
 def main() -> None:
     run_src = (KAGGLE / "run.py").read_text(encoding="utf-8")
     mm_src = strip_module_boilerplate((KAGGLE / "mm_pilot.py").read_text(encoding="utf-8"))
+    typed_src = strip_module_boilerplate((KAGGLE / "typed_pilot.py").read_text(encoding="utf-8"))
     worker_src = (KAGGLE / "gliner_worker.py").read_text(encoding="utf-8")
 
     # 1. drop the mm import (STAGES arrives inline at module level)
@@ -56,9 +57,20 @@ def main() -> None:
         run_src.rstrip("\n")
         + "\n\n# ==== inlined: multimodal pilot stages (kaggle/mm_pilot.py) ====\n"
         + mm_src.rstrip("\n")
+        + "\n\n# ==== inlined: typed-decisions arms (kaggle/typed_pilot.py) ====\n"
+        + typed_src.rstrip("\n").replace(
+            "STAGES = {", "TYPED_STAGES = {", 1
+        )
         + "\n\n# ==== embedded: gliner worker source (runs inside the isolated venv) ====\n"
         + f"GLINER_WORKER_SRC = {json.dumps(worker_src)}\n\n"
         + ENTRY
+    )
+    # merge BOTH inlined stage dicts inside main()
+    flat = flat.replace(
+        "    stages.update(STAGES)  # inlined mm_pilot stages (defined below)\n",
+        "    stages.update(STAGES)\n"
+        "    stages.update(TYPED_STAGES)  # inlined pilot stage dicts (defined below)\n",
+        1,
     )
 
     OUT.mkdir(parents=True, exist_ok=True)
