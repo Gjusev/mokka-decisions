@@ -373,9 +373,15 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
         log("laya loaded")
     except Exception as exc:
         log(f"laya load failed: {exc}")
+    # gliner2 needs transformers<5; the downgrade is contained to this kernel
+    # session and happens AFTER laya (works on 5.x) has been constructed
     try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet",
+             "gliner2[local]>=2.0", "transformers<5"]
+        )
         backends.append(GlinerBackend())
-        log("gliner loaded")
+        log("gliner loaded (transformers<5)")
     except Exception as exc:
         log(f"gliner load failed: {exc}")
 
@@ -404,10 +410,10 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--stage", default="resume_test,baselines",
+        "--stage", default="train,eval",
         help="comma-separated stages: smoke,train,resume_test,eval,baselines",
     )
-    parser.add_argument("--config", default="configs/pilot.yaml")  # bundle v1 carries pilot-budget data
+    parser.add_argument("--config", default="configs/train.yaml")  # bundle v1 carries pilot-budget data
     args = parser.parse_args()
 
     work = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path("runs/kaggle-local")

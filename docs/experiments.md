@@ -32,18 +32,25 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
   false acceptance; full-77 0.705; permutation flips 0/500; ECE 0.011–0.042.
 - Kernel v7. Artifacts: `runs/kaggle-eval/` (rows + eval_results.json).
 
-## E4 — Resume test (kernel v8, running)
+## E4 — Resume test (kernel v8) — PASS
 
-- A: continuous 2 epochs vs B: 1 epoch + reload checkpoint + 1 epoch, same
-  seed; expect |Δacc| ≤ 0.05 explained by CUDA nondeterminism.
+- Continuo 2 épocas: dev acc 0,870 / NLL 0,532. Reanudado (1 época + recarga
+  completa de checkpoint + 1 época): 0,860 / 0,438. Δacc 0,010 ≤ tolerancia
+  0,05 (no determinismo CUDA). Artifacts: `runs/kaggle-v8/`.
+- Transporte del checkpoint verificado vía dataset privado versionado
+  `gjusev/mokka-decisions-checkpoint` (mecanismo preferido sobre kernel_sources).
 
-## E5 — Baselines laya + gliner2.5 zero-shot (kernel v8, running)
+## E5 — Baselines: laya ejecutado; gliner reintento preparado
 
-- Same eval sets, same option descriptions; laya probabilities and gliner
-  independent-confidences (renormalised, raw kept) — thresholds not fitted for
-  these rows (forced metrics only, comparable column).
+- Laya multilingüe zero-shot (kernel v8, mismos eval sets, p50 ≈ 39 ms GPU):
+  banking candidatos 0,725 · 77-vías 0,390 · massive 0,545 · clinc 0,936 ·
+  clinc_oos 0,985 · xprobe 0,815. ECE hasta 0,51 (sin recalibrar).
+- GLiNER2.5: carga fallida con transformers 5.19 (AutoExtractor TypeError).
+  Parche: instalar `gliner2[local]` + `transformers<5` contenido en la sesión
+  del kernel después de construir Laya; reintento tras el run final.
 
-## Pending
+## E6 — Full-budget train + eval (kernel v9, en ejecución)
 
-- E6: full-budget training (train.yaml, 16,784 instances, 3 epochs) + eval in
-  one kernel; then final release export with measured numbers.
+- train.yaml: 16.784 instancias, 3 épocas, mismo resto de receta; eval
+  (temperatura, umbral, test completo, permutación) en la misma sesión.
+  data_hash `a029d9662fc04a99` (bundle v3).
