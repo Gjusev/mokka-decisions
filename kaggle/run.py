@@ -31,6 +31,8 @@ def log(msg: str) -> None:
 def find_bundle() -> Path:
     root = Path("/kaggle/input")
     if root.exists():
+        # attachment debug: list every dataset mount before anything else
+        log("input mounts: " + ", ".join(sorted(str(p) for p in root.iterdir())))
         candidates = [p.parent for p in root.rglob("BUNDLE_MANIFEST.json")]
         # prefer the full bundle (contains the wheel); checkpoint bundles also
         # carry a manifest but no dist/

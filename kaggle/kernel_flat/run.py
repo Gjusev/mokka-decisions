@@ -31,6 +31,8 @@ def log(msg: str) -> None:
 def find_bundle() -> Path:
     root = Path("/kaggle/input")
     if root.exists():
+        # attachment debug: list every dataset mount before anything else
+        log("input mounts: " + ", ".join(sorted(str(p) for p in root.iterdir())))
         candidates = [p.parent for p in root.rglob("BUNDLE_MANIFEST.json")]
         # prefer the full bundle (contains the wheel); checkpoint bundles also
         # carry a manifest but no dist/
@@ -1053,20 +1055,33 @@ def stage_typed_arms(bundle: Path, work: Path, config: str) -> None:
     arms.append(("small_fresh", "jhu-clsp/mmBERT-small", ""))
 
     results = {}
+    import glob as _g
+
     for name, encoder, init in arms:
-        best, report = _train_arm(name, encoder, train, dev, work, init_from=init)
+        pretrained = sorted(_g.glob(f"/kaggle/input/*/arms/{name}/checkpoint_best.safetensors"))
+        if pretrained:
+            arm_dir = work / name
+            arm_dir.mkdir(parents=True, exist_ok=True)
+            import shutil as _sh
+
+            _sh.copy2(pretrained[0], arm_dir / "checkpoint_best.safetensors")
+            report = {"best_dev_accuracy": None, "final_step": None, "config_hash": ""}
+            log(f"{name}: reusing attached pre-trained checkpoint {pretrained[0]}")
+        else:
+            best, report = _train_arm(name, encoder, train, dev, work, init_from=init)
         results[name] = {
             "encoder": encoder,
             "initialised_from": init or "upstream",
             "best_dev_accuracy": report["best_dev_accuracy"],
             "final_step": report["final_global_step"],
             "config_hash": report["config_hash"],
+            "reused_checkpoint": bool(pretrained),
         }
 
     # ---- frozen-protocol evaluation on the pinned test parquet ----
     import math
 
-    parquet = root / "test-00000-of-00001.parquet"
+    parquet = work / "typed-test-00000-of-00001.parquet"  # work dir: input is read-only
     if not parquet.exists():
         import urllib.request
 
@@ -1170,7 +1185,131 @@ def stage_typed_arms(bundle: Path, work: Path, config: str) -> None:
     )
 
 
-TYPED_STAGES = {"typed_arms": stage_typed_arms}
+def stage_typed_a1(bundle: Path, work: Path, config: str) -> None:
+    """A1 marker architecture on the same typed-train data as the A0 arms.
+
+    One sequence per decision (state+question+marked options), scores from
+    marker hidden states. Trained with the same recipe/splits; evaluated with
+    the same frozen adapter construction. Reports sequence lengths, step time
+    and permutation behaviour for the A0-vs-A1 cost/quality comparison.
+    """
+    import time as _time
+
+    import torch
+
+    if not torch.cuda.is_available():
+        raise SystemExit("typed_a1 needs the GPU that was not assigned")
+    root = _find_typed_root(bundle)
+    train = _load(root, "train")
+    dev = _load(root, "dev")
+    log(f"typed A1 data: train={len(train)} dev={len(dev)}")
+
+    from mokka_decisions.arch_a1 import MarkerScorer, train_a1, collate_a1, forward_a1
+
+    model = MarkerScorer("jhu-clsp/mmBERT-base")
+    t0 = _time.time()
+    report = train_a1(
+        model, train, dev,
+        output_dir=str(work / "a1_base"), epochs=3, microbatch=4, grad_accumulation=8,
+        device="cuda",
+    )
+    log(f"a1 trained in {_time.time()-t0:.0f}s best_dev={report['best_dev_accuracy']}")
+
+    # reload best and run the frozen-protocol eval (same construction as arms)
+    from mokka_decisions.contracts import DecisionCase, Option
+    from mokka_decisions.model import load_checkpoint
+    from safetensors.torch import load_file
+
+    model.load_state_dict(load_file(str(work / "a1_base" / "checkpoint_best.safetensors")))
+    model = model.cuda().eval()
+
+    import pyarrow.parquet as pq
+    import urllib.request
+
+    parquet = work / "typed-test-00000-of-00001.parquet"  # work dir: input is read-only
+    if not parquet.exists():
+        url = (
+            "https://huggingface.co/datasets/LocalLLaMA/typed-decisions/resolve/"
+            "c76749ec58bd8c3d2ea706b31c333a9059c38f90/all/test-00000-of-00001.parquet"
+        )
+        parquet.write_bytes(urllib.request.urlopen(url, timeout=180).read())
+    import collections
+    import math
+
+    cases_rows = pq.read_table(parquet).to_pylist()
+    eval_cases, metadata = [], []
+    for case in cases_rows:
+        state = json.loads(case["state"])
+        gold = json.loads(case["gold"])
+        for question_id, question in json.loads(case["questions"]).items():
+            kind = question["type"]
+            criteria = question.get("criteria")
+            if criteria is None and kind == "noul":
+                criteria = {"false": "false", "true": "true"}
+            if isinstance(criteria, list):
+                criteria = {str(i): v for i, v in enumerate(criteria)}
+            keys = ["false", "true"] if kind == "noul" else list(criteria)
+            eval_cases.append(DecisionCase(
+                id=f"{case['id']}:{question_id}", group_id=case["id"], source="typed-decisions",
+                language="en", domain="benchmark",
+                state=json.dumps(state, ensure_ascii=False), question=question["instructions"],
+                options=tuple(Option(id=f"o{i}", description=criteria[k]) for i, k in enumerate(keys)),
+                target_kind="single", target_option=f"o{keys.index(str(gold[question_id]['label']))}",
+            ))
+            metadata.append(dict(id=eval_cases[-1].id, type=kind, keys=keys,
+                                 gold=str(gold[question_id]["label"])))
+
+    stats = collections.defaultdict(lambda: dict(count=0, correct=0))
+    mae = n_mae = 0
+    nll = 0.0
+    t0 = _time.time()
+    skipped_truncation = 0
+    latencies = []
+    for s in range(0, len(eval_cases), 8):
+        chunk = eval_cases[s : s + 8]
+        t1 = _time.perf_counter()
+        batch = collate_a1(model, chunk, "cuda")
+        logits = forward_a1(model, batch).float()
+        torch.cuda.synchronize()
+        if s < 100:
+            latencies.append((_time.perf_counter() - t1) * 1000 / len(chunk))
+        preds = logits.argmax(-1).tolist()
+        for i, (case, m) in enumerate(zip(chunk, metadata[s : s + 8])):
+            if batch["targets"][i].item() == -100:
+                skipped_truncation += 1
+                stats[m["type"]]["count"] += 1
+                continue  # truncated markers: counted as failures (unusable)
+            gold_idx = m["keys"].index(m["gold"])
+            correct = preds[i] == gold_idx
+            st = stats[m["type"]]
+            st["count"] += 1
+            st["correct"] += int(correct)
+    for st in stats.values():
+        st["accuracy"] = st["correct"] / st["count"] if st["count"] else None
+    total_correct = sum(st["correct"] for st in stats.values())
+    result = {
+        "arm": "a1_base",
+        "label": "adapted (equal data, marker architecture)",
+        "best_dev_accuracy": report["best_dev_accuracy"],
+        "test": {
+            "overall": f"{total_correct}/2000",
+            "overall_accuracy": total_correct / 2000,
+            "by_type": dict(stats),
+            "skipped_by_truncation": skipped_truncation,
+            "eval_elapsed_s": round(_time.time() - t0, 1),
+            "latency_ms_batch1_p50": sorted(latencies)[len(latencies) // 2] if latencies else None,
+            "protocol": "frozen v1.0 adapter construction",
+        },
+        "history": report["history"],
+    }
+    (work / "typed_a1_results.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    log(f"A1 TEST: {total_correct}/2000 = {total_correct/2000:.4f} skipped={skipped_truncation}")
+    (work / "run_status.json").write_text(
+        json.dumps({"stage": "typed_a1", "overall": total_correct / 2000}, indent=2), encoding="utf-8"
+    )
+
+
+TYPED_STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1}
 
 # ==== embedded: gliner worker source (runs inside the isolated venv) ====
 GLINER_WORKER_SRC = "\"\"\"GLiNER2.5 worker: runs INSIDE an isolated venv (its own transformers<5).\n\nProtocol (argv): cases.jsonl rows_out.jsonl\nReads decision cases, writes BackendRow JSONL. Kept dependency-free of the\nmain kernel env: the parent installs this venv with the mokka wheel +\ngliner2[local] + transformers<5, then invokes this file with that venv's\npython. The main environment (trainer, future VLMs) stays untouched.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport sys\nimport time\nfrom pathlib import Path\n\n\ndef main() -> int:\n    cases_path, out_path = Path(sys.argv[1]), Path(sys.argv[2])\n    sys.path.insert(0, str(Path(__file__).parent))\n\n    from mokka_decisions.backends.gliner import GlinerBackend\n    from mokka_decisions.contracts import DecisionCase\n    from mokka_decisions.evaluate import run_backend\n\n    cases = [DecisionCase.from_dict(json.loads(ln)) for ln in cases_path.read_text(encoding=\"utf-8\").splitlines() if ln.strip()]\n    t0 = time.time()\n    backend = GlinerBackend()\n    try:\n        import torch\n\n        if torch.cuda.is_available():\n            backend.model = backend.model.cuda().eval()\n            print(\"[gliner-worker] running on GPU\", flush=True)\n    except Exception as exc:\n        print(f\"[gliner-worker] GPU unavailable ({exc}); CPU mode\", flush=True)\n    rows = run_backend(backend, cases)\n    out_path.parent.mkdir(parents=True, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\\n\") as fh:\n        for row in rows:\n            fh.write(json.dumps(row.to_dict(), ensure_ascii=False, sort_keys=True) + \"\\n\")\n    errors = sum(1 for r in rows if r.error)\n    print(f\"[gliner-worker] {len(cases)} cases in {time.time()-t0:.0f}s, errors={errors}\", flush=True)\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"

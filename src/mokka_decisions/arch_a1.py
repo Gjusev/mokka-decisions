@@ -167,3 +167,123 @@ def forward_a1(model: MarkerScorer, batch: dict) -> torch.Tensor:
     )
     logits[rows[:, 0], rows[:, 2]] = scores
     return logits
+
+
+@torch.no_grad()
+def evaluate_a1(model, cases, *, device, batch_decisions=8) -> dict:
+    model.eval()
+    correct = n = 0
+    nll_sum = 0.0
+    for s in range(0, len(cases), batch_decisions):
+        chunk = [c for c in cases[s : s + batch_decisions] if c.target_option]
+        if not chunk:
+            continue
+        batch = collate_a1(model, chunk, device)
+        logits = forward_a1(model, batch).float()
+        valid = batch["targets"] != -100
+        if valid.any():
+            preds = logits.argmax(-1)
+            correct += int(((preds == batch["targets"]) & valid).sum().item())
+            nll = F.cross_entropy(logits, batch["targets"], reduction="sum", ignore_index=-100)
+            nll_sum += float(nll.item())
+            n += int(valid.sum().item())
+    model.train()
+    return {"n": n, "accuracy": correct / n if n else None, "mean_nll": nll_sum / n if n else None}
+
+
+def train_a1(
+    model: MarkerScorer,
+    train_cases,
+    dev_cases,
+    *,
+    output_dir,
+    epochs: int = 3,
+    microbatch: int = 4,
+    grad_accumulation: int = 8,
+    encoder_lr: float = 2e-5,
+    head_lr: float = 1e-4,
+    weight_decay: float = 0.01,
+    warmup_ratio: float = 0.05,
+    max_grad_norm: float = 1.0,
+    seed: int = 42,
+    device: str = "cpu",
+) -> dict:
+    """Same recipe/checkpoint pattern as the A0 trainer (comparable runs)."""
+    import json
+    import math
+    import random
+    from pathlib import Path
+
+    import torch
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if device == "cuda":
+        torch.cuda.manual_seed_all(seed)
+    model = model.to(device)
+    model.train()
+    model.ensure_markers(16)  # common K sizes upfront so embeddings settle
+
+    usable = [c for c in train_cases if c.target_option]
+    steps_per_epoch = math.ceil(len(usable) / (microbatch * grad_accumulation))
+    total_steps = max(steps_per_epoch * epochs, 1)
+    optimizer = torch.optim.AdamW(model.parameter_groups(encoder_lr, head_lr), weight_decay=weight_decay)
+    warmup = max(int(total_steps * warmup_ratio), 1)
+
+    def lr_lambda(step):
+        if step < warmup:
+            return step / warmup
+        progress = (step - warmup) / max(total_steps - warmup, 1)
+        return max(0.05, 0.95 * (1 - progress) + 0.05)
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    scaler = torch.amp.GradScaler("cuda", enabled=(device == "cuda"))
+
+    rng = random.Random(seed ^ 0xA1)
+    best = -1.0
+    history = []
+    global_step = 0
+    for epoch in range(epochs):
+        order = list(range(len(usable)))
+        rng.shuffle(order)
+        optimizer.zero_grad(set_to_none=True)
+        for mb_idx, start in enumerate(range(0, len(order), microbatch)):
+            chunk = [usable[i] for i in order[start : start + microbatch]]
+            batch = collate_a1(model, chunk, device)
+            with torch.autocast("cuda", enabled=(device == "cuda")):
+                logits = forward_a1(model, batch).float()
+                loss = F.cross_entropy(logits, batch["targets"], ignore_index=-100) / grad_accumulation
+            scaler.scale(loss).backward()
+            if (mb_idx + 1) % grad_accumulation == 0 or start + microbatch >= len(order):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    [p for g in optimizer.param_groups for p in g["params"]], max_grad_norm
+                )
+                scaler.step(optimizer)
+                scaler.update()
+                scheduler.step()
+                optimizer.zero_grad(set_to_none=True)
+                global_step += 1
+                if global_step % 25 == 0:
+                    print(f"[a1] epoch={epoch} step={global_step} loss={float(loss.item())*grad_accumulation:.4f}", flush=True)
+        dev_metrics = evaluate_a1(model, dev_cases, device=device)
+        history.append({"epoch": epoch, "step": global_step, "dev": dev_metrics})
+        print(f"[a1 epoch {epoch}] dev={dev_metrics}", flush=True)
+        if (dev_metrics.get("accuracy") or 0.0) >= best:
+            best = dev_metrics.get("accuracy") or 0.0
+            from safetensors.torch import save_file
+
+            save_file(dict(model.state_dict()), str(out / "checkpoint_best.safetensors"), metadata={"format": "pt"})
+        torch.save(
+            {"model": model.state_dict(), "optimizer": optimizer.state_dict(),
+             "scheduler": scheduler.state_dict(), "scaler": scaler.state_dict(),
+             "epoch": epoch + 1, "global_step": global_step,
+             "rng_python": random.getstate(), "rng_torch": torch.get_rng_state(),
+             "metrics": {"best_dev_accuracy": best, "history": history}},
+            out / "checkpoint_latest.pt",
+        )
+    report = {"epochs": epochs, "final_step": global_step, "best_dev_accuracy": best, "history": history}
+    (out / "run_report.json").write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    return report

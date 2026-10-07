@@ -62,3 +62,6 @@ data/mm-v1/
 
 # derived typed-decisions training splits (rebuild via scripts/prepare_typed_train.py)
 data/typed-v1/
+
+# scratch bundle dirs
+kaggle-checkpoint-tmp/
