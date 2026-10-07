@@ -356,9 +356,8 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "--quiet", "laya>=0.3", "gliner2[local]>=2.0"]
     )
-    from mokka_decisions.backends.gliner import GlinerBackend
     from mokka_decisions.backends.laya import LayaBackend
-    from mokka_decisions.backends.linear import LinearBackend
+    from mokka_decisions.backends.linear import LinearBackend, LinearRejectBackend
     from mokka_decisions.contracts import load_jsonl
     from mokka_decisions.evaluate import dump_rows, run_backend, summarize, summarize_by, bootstrap_accuracy_ci
 
@@ -366,24 +365,51 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
     for utt_file in sorted(find_file(bundle, "data/processed/v1/utterances/banking77.jsonl").parent.glob("*.jsonl")):
         train_rows_raw.extend(r for r in load_jsonl(str(utt_file)) if r.get("split") == "train")
     log(f"tfidf train rows: {len(train_rows_raw)}")
-    backends = [LinearBackend(train_rows_raw)]
-    log("tfidf fitted")
+    backends = [LinearBackend(train_rows_raw), LinearRejectBackend(train_rows_raw)]
+    log("tfidf fitted (closed-world + trainable-none variants)")
     try:
         backends.append(LayaBackend())
         log("laya loaded")
     except Exception as exc:
         log(f"laya load failed: {exc}")
-    # gliner2 needs transformers<5; the downgrade is contained to this kernel
-    # session and happens AFTER laya (works on 5.x) has been constructed
+    # gliner2 needs transformers<5: run it in an ISOLATED venv (the main env
+    # keeps transformers 5.x for the trainer and future VLM comparators)
+    gliner_ok = False
     try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--quiet",
-             "gliner2[local]>=2.0", "transformers<5"]
-        )
-        backends.append(GlinerBackend())
-        log("gliner loaded (transformers<5)")
+        import venv as _venv
+
+        venv_dir = Path("/tmp/gliner-venv")
+        if not (venv_dir / "bin" / "python").exists():
+            _venv.create(str(venv_dir), with_pip=True)
+        vpy = str(venv_dir / "bin" / "python")
+        wheel = sorted(bundle.rglob("*.whl"))[0]
+        subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
+                               str(wheel), "pyyaml", "safetensors"])
+        subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
+                               "gliner2[local]>=2.0", "transformers<5"])
+        gliner_ok = True
+        log("gliner venv ready (isolated, transformers<5)")
     except Exception as exc:
-        log(f"gliner load failed: {exc}")
+        log(f"gliner venv setup failed: {exc}")
+
+    def run_gliner_worker(cases):
+        """Score via the isolated venv worker; returns BackendRow dicts."""
+        from mokka_decisions.backends.base import BackendRow
+
+        work_dir = Path("/tmp/gliner-io")
+        work_dir.mkdir(exist_ok=True)
+        cases_file = work_dir / "cases.jsonl"
+        rows_file = work_dir / "rows.jsonl"
+        cases_file.write_text(
+            "\n".join(json.dumps(c.to_dict(), ensure_ascii=False) for c in cases), encoding="utf-8"
+        )
+        worker = Path(__file__).parent / "gliner_worker.py"
+        subprocess.check_call(
+            [str(Path("/tmp/gliner-venv/bin/python")), str(worker),
+             str(cases_file), str(rows_file)], cwd=str(work_dir)
+        )
+        rows_raw = [json.loads(ln) for ln in rows_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        return [BackendRow(**{k: v for k, v in r.items() if k in BackendRow.__dataclass_fields__}) for r in rows_raw]
 
     eval_dir = find_file(bundle, "data/processed/v1/eval/dev_eval.jsonl").parent
     for eval_file in sorted(eval_dir.glob("*.jsonl")):
@@ -400,6 +426,19 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
                 json.dumps(s, indent=2), encoding="utf-8"
             )
             log(f"{name} / {backend.name}: acc={s['forced_accuracy']}")
+        if gliner_ok:
+            try:
+                rows = run_gliner_worker(cases)
+                dump_rows(rows, work / "rows" / f"{name}_gliner25_multilingual_zero_shot.jsonl")
+                s = summarize(rows, cases)
+                s["by_language"] = summarize_by(rows, cases, "language")
+                s["bootstrap"] = bootstrap_accuracy_ci(rows, cases, n_boot=300)
+                (work / "results" / f"{name}_gliner25_multilingual_zero_shot.json").write_text(
+                    json.dumps(s, indent=2), encoding="utf-8"
+                )
+                log(f"{name} / gliner25: acc={s['forced_accuracy']}")
+            except Exception as exc:
+                log(f"{name} / gliner25 worker failed: {exc}")
 
     (work / "run_status.json").write_text(
         json.dumps({"stage": "baselines", "backends": [b.name for b in backends]}, indent=2),

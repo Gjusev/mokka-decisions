@@ -327,6 +327,45 @@ class TestBackends:
 
 
 class TestEvaluate:
+    def test_brier_multiclass_known_values(self):
+        """metrics v2: full multiclass Brier vs the legacy gold-only value."""
+        from mokka_decisions.backends.base import BackendRow
+        from mokka_decisions.evaluate import nll_brier
+
+        case = make_case()  # 3 options: billing (gold), tech, none
+        row = BackendRow(
+            case_id=case.id, group_id=case.group_id, source=case.source,
+            language=case.language, domain=case.domain, backend="t",
+            model_revision="", candidate="billing",
+            probabilities={"billing": 0.6, "tech": 0.3, NONE_ID: 0.1}, latency_ms=1.0,
+        )
+        out = nll_brier([row], [case])
+        # full: (1-0.6)^2 + 0.3^2 + 0.1^2 = 0.16 + 0.09 + 0.01 = 0.26
+        assert out["brier"] == pytest.approx(0.26, abs=1e-9)
+        # legacy: (1-0.6)^2 = 0.16
+        assert out["brier_gold"] == pytest.approx(0.16, abs=1e-9)
+        assert out["metrics_version"] == 2
+        # perfect prediction -> exactly 0 both ways
+        row_ok = BackendRow(
+            case_id=case.id, group_id=case.group_id, source=case.source,
+            language=case.language, domain=case.domain, backend="t",
+            model_revision="", candidate="billing",
+            probabilities={"billing": 1.0, "tech": 0.0, NONE_ID: 0.0}, latency_ms=1.0,
+        )
+        out_ok = nll_brier([row_ok], [case])
+        assert out_ok["brier"] == pytest.approx(0.0, abs=1e-9)
+        # uniform over K=3 options: multiclass = (K-1)/K = 2/3; gold-only = (2/3)^2
+        row_uni = BackendRow(
+            case_id=case.id, group_id=case.group_id, source=case.source,
+            language=case.language, domain=case.domain, backend="t",
+            model_revision="", candidate="billing",
+            probabilities={"billing": 1 / 3, "tech": 1 / 3, NONE_ID: 1 / 3},
+            latency_ms=1.0,
+        )
+        out_uni = nll_brier([row_uni], [case])
+        assert out_uni["brier"] == pytest.approx(2 / 3, abs=1e-9)
+        assert out_uni["brier_gold"] == pytest.approx(4 / 9, abs=1e-9)
+
     def test_summarize_counts_errors(self):
         from mokka_decisions.backends.base import BackendRow
         from mokka_decisions.evaluate import summarize

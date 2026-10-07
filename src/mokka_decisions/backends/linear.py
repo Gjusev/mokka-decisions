@@ -51,3 +51,34 @@ class LinearBackend(Backend):
         by_label = {label: float(p) for label, p in zip(self.classes_, probs)}
         present = {o.id: by_label.get(o.id, 0.0) for o in case.options if o.id != NONE_ID}
         return present  # none omitted: no signal; normalise_probabilities fills the rest
+
+
+class LinearRejectBackend(LinearBackend):
+    """TF-IDF + LR *with* a trainable reject: `none` becomes a real class.
+
+    The closed-world LinearBackend scores 0 % on gold=none sets because we
+    excluded `none` from its label space — a modelling choice, not an inherent
+    limit of linear classifiers. This variant trains `none` on the OOS training
+    utterances (CLINC's own out-of-scope annotations, train split only), so it
+    can reject. Both variants are reported separately.
+    """
+
+    name = "tfidf_lr_none"
+
+    def __init__(self, train_rows: Sequence[dict], **kwargs):
+        from ..contracts import NONE_ID as _NONE
+
+        augmented = []
+        for row in train_rows:
+            label = row["label"]
+            new = dict(row)
+            new["label"] = _NONE if str(label).strip().lower() in {"oos", "out_of_scope"} else label
+            augmented.append(new)
+        if not any(r["label"] == _NONE for r in augmented):
+            raise ValueError("LinearRejectBackend needs OOS training rows (clinc oos)")
+        super().__init__(augmented, **kwargs)
+
+    def score_one(self, case: DecisionCase) -> dict[str, float]:
+        probs = self.pipeline.predict_proba([case.state])[0]
+        by_label = {label: float(p) for label, p in zip(self.classes_, probs)}
+        return {o.id: by_label.get(o.id, 0.0) for o in case.options}

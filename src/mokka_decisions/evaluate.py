@@ -52,7 +52,14 @@ def macro_f1(rows: Sequence[BackendRow], cases: Sequence[DecisionCase]) -> float
 
 
 def nll_brier(rows: Sequence[BackendRow], cases: Sequence[DecisionCase]) -> dict:
-    nlls, briers, skipped = [], [], 0
+    """NLL of the gold option and two Brier variants (metrics v2).
+
+    ``brier`` is the full multiclass Brier score: the sum over ALL options of
+    (p_i - 1[i == gold])^2 — range [0, 2]. ``brier_gold`` is the legacy v1
+    value (1 - p_gold)^2 kept for continuity with earlier reports; historical
+    numbers stay comparable under that key only.
+    """
+    nlls, briers, briers_gold, skipped = [], [], [], 0
     for row, case in zip(rows, cases):
         p = row.probabilities.get(case.target_option)
         if p is None or not math.isfinite(p):
@@ -60,12 +67,19 @@ def nll_brier(rows: Sequence[BackendRow], cases: Sequence[DecisionCase]) -> dict
             continue
         p = min(max(p, 1e-12), 1 - 1e-12)
         nlls.append(-math.log(p))
-        briers.append((1.0 - p) ** 2)
+        briers_gold.append((1.0 - p) ** 2)
+        total = (1.0 - p) ** 2
+        for oid, pi in row.probabilities.items():
+            if oid != case.target_option:
+                total += pi**2
+        briers.append(total)
     return {
         "nll": sum(nlls) / len(nlls) if nlls else None,
         "brier": sum(briers) / len(briers) if briers else None,
+        "brier_gold": sum(briers_gold) / len(briers_gold) if briers_gold else None,
         "probability_rows": len(nlls),
         "rows_without_gold_probability": skipped,
+        "metrics_version": 2,
     }
 
 

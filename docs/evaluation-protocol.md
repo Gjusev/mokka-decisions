@@ -29,16 +29,26 @@ gold option always present among options, official test pools untouched.
 
 Three scenario classes — reported separately, never averaged together:
 
-1. **Candidate-set decisions** (primary): K=6 options (gold + sampled
-   distractors + `none`), sampled deterministically per case. Training varies
-   K∈[4,8] with `none` present in ~50 % of training instances (always when
-   the gold is `none`). This is the scenario the model is designed for.
+1. **Candidate-set decisions** (primary): K=6 options **constructed by
+   including the gold option plus sampled distractors and `none`** — by
+   construction a correct option is always available, which inflates
+   difficulty-down. This measures selection among known-present candidates,
+   NOT recall over a live option catalog. Routing-style experiments (or any
+   deployment where options arrive without a guaranteed correct one) must add
+   a *no-gold* variant (all-distractor cases) before claiming retrieval
+   capability. Training varies K∈[4,8] with `none` present in ~50 % of
+   training instances (always when the gold is `none`).
 2. **Fixed-taxonomy decisions**: all 77 banking intents + `none` (BANKING77
    official test). Comparison with fixed-classification baselines.
 3. **Generalisation probes**:
    - cross-domain OOS: MASSIVE de/es test utterances scored against CLINC
      options + `none` (gold `none`) — descriptions known, utterance domain never
-     seen with this schema;
+     seen with this schema. **Label audit (2026-10-07):** 26/400 built cases
+     (6.5 %) have gold `none` while their MASSIVE intent (`play_music`) exists
+     verbatim in the CLINC taxonomy — genuinely ambiguous gold. All xprobe
+     metrics are reported twice: all cases, and excluding those 26 by an
+     exact-name rule applied identically to every backend. Semantic
+     near-overlaps beyond exact names remain a stated limitation.
    - CLINC OOS test (gold `none` with CLINC distractors);
    - option-order permutation: same case, permuted options; a *flip* is a
      changed argmax.
@@ -121,18 +131,46 @@ Pilot temperature was fitted on pilot-budget calibration splits.
 Laya / GLiNER2.5 rows: pending (kernel `baselines` running).
 Full-model pass (train.yaml budgets): pending.
 
-Reading so far, honestly stated:
+Reading so far, honestly stated (numbers revised after audit, 2026-10-07):
 
-- candidate-set decisions: our model is 1–3 pp behind TF-IDF+LR with labels —
-  expected for a scorer vs a fixed classifier on its home turf;
+- **Calibration vs test risk, kept separate:** threshold 0.300 was fitted on
+  `cal_policy` where it yields 3.86 % risk at 99.86 % coverage — that is a
+  *calibration-split* property. On test sets the same policy behaves
+  differently per scenario: candidate sets ~3–4.6 % risk, but the 78-option
+  banking set reached 27.8 % selective risk and the xprobe ECE was 0.141. The
+  validated scope is candidate-set decisions at K≈6; no claim extends to other
+  K or domains.
+- **Sample-size mismatch corrected:** the pilot model rows came from
+  pilot-budget eval sets (600/900/300) while the v8 comparators ran on
+  full-budget sets (1000/1500/400) — those columns are NOT directly
+  comparable. The final table (below) reruns every backend on identical
+  IDs/options at full budgets.
+- candidate-set decisions: our pilot was 1–3 pp behind TF-IDF+LR (closed
+  world). The closed-world variant *cannot* choose `none` because we excluded
+  `none` from its label space — a modelling choice, not an inherent linear-
+  classifier limit; `tfidf_lr_none` (trainable reject on CLINC OOS training
+  data) is the fair comparison on OOS sets.
 - the model's differentiator is real and measured: OOS `none`-selection 93.7 %
-  where TF-IDF structurally scores 0, and perfect option-order invariance
-  (0/500 flips);
-- the 77-way fixed-taxonomy scenario is the model's weakest (70.5 % vs 86.5 %):
-  training with K=4–8 candidate sets transfers imperfectly to 78-option
-  decisions — an honest limitation, improvable with full-taxonomy training
-  instances;
+  (pilot budgets) and perfect option-order invariance (0/500 flips);
+- the 77-way fixed-taxonomy scenario is the model's weakest (70.5 % pilot vs
+  86.5 % TF-IDF): training with K=4–8 candidate sets transfers imperfectly to
+  78-option decisions;
 - cross-domain OOS (xprobe) false acceptance 20.3 % is above the 5 % target —
-  the pilot model under-abstains on out-of-domain text in de/es.
+  the pilot under-abstains out-of-domain; the 26/400 ambiguous labels put a
+  ±few-point uncertainty band on this probe either way.
+
+## 6b. Final comparison (identical IDs/options, full budgets)
+
+Pending: final-model eval (kernel v9) + baselines rerun on the same full
+eval sets (tfidf closed, tfidf_lr_none, laya, gliner via isolated venv).
+
+| Set (full budgets) | tfidf_lr | tfidf_lr_none | laya_zs | gliner_zs | mokka final |
+|---|---|---|---|---|---|
+| banking77_test_candidates (n=1000) | — | — | — | — | — |
+| banking77_test_full (n=1000) | — | — | — | — | — |
+| massive_test_candidates (n=1500) | — | — | — | — | — |
+| clinc_test_candidates (n=800) | — | — | — | — | — |
+| clinc_oos_test (n=400) | — | — | — | — | — |
+| xprobe (n=400) | — | — | — | — | — |
 
 Verdict: pending full-model pass + comparators.
