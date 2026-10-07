@@ -342,4 +342,96 @@ def stage_typed_a1(bundle: Path, work: Path, config: str) -> None:
     )
 
 
-STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1}
+def stage_typed_ord(bundle: Path, work: Path, config: str) -> None:
+    """H1 experiment: A0 base + ordinal soft-target loss on score rows.
+
+    Hypothesis (from dev error diagnosis): score-type rows fail by confident
+    adjacent-level confusions; a unimodal soft target (tau=1) on score rows
+    should improve score accuracy and MAE without touching anything else.
+    Control: base_fresh (same data, init, recipe, seeds) -> dev comparison.
+    """
+    import time as _time
+
+    import torch
+
+    if not torch.cuda.is_available():
+        raise SystemExit("typed_ord needs the GPU that was not assigned")
+    root = _find_typed_root(bundle)
+    train = _load(root, "train")
+    dev = _load(root, "dev")
+    log(f"typed_ord data: train={len(train)} dev={len(dev)}")
+
+    # question types come from the rebuilt typed-v1 rows
+    types_path = root / "cases" / "train.jsonl"
+    ordinal_ids = set()
+    import json as _json
+
+    for line in types_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            row = _json.loads(line)
+            if row.get("question_type") == "score":
+                ordinal_ids.add(row["id"])
+    log(f"ordinal (score) train rows: {len(ordinal_ids)}")
+
+    from mokka_decisions.train import TrainConfig, run_training
+    from transformers import AutoTokenizer
+
+    cfg = TrainConfig(
+        encoder_name="jhu-clsp/mmBERT-base",
+        max_length=512, microbatch=4, grad_accumulation=8, epochs=3,
+        encoder_lr=2e-5, head_lr=1e-4, seed=42, amp=True,
+        output_dir=str(work / "base_ord"), max_options_per_step=32,
+    )
+    tokenizer = AutoTokenizer.from_pretrained("jhu-clsp/mmBERT-base")
+    t0 = _time.time()
+    report = run_training(
+        cfg, train_cases=train, dev_cases=dev, tokenizer=tokenizer,
+        ordinal_case_ids=ordinal_ids, ordinal_tau=1.0,
+    )
+    log(f"base_ord trained in {_time.time()-t0:.0f}s best_dev={report['best_dev_accuracy']}")
+
+    # dev diagnosis by question type (frozen construction)
+    import collections
+    import math
+
+    dev_rows = [ _json.loads(l) for l in (root / "cases" / "dev.jsonl").read_text(encoding="utf-8").splitlines() if l.strip() ]
+    types = {r["id"]: r.get("question_type", "?") for r in dev_rows}
+    from mokka_decisions.model import OptionScorer, load_checkpoint, ScorerInference
+    from safetensors.torch import load_file
+
+    m = OptionScorer("jhu-clsp/mmBERT-base")
+    load_checkpoint(m, work / "base_ord" / "checkpoint_best.safetensors")
+    sc = ScorerInference(m, tokenizer, device="cuda", temperature=1.0, max_length=512, batch_decisions=16)
+    typed_dev = [c for c in dev if c.target_option]
+    probs = sc.score(typed_dev)
+    stats = collections.defaultdict(lambda: dict(n=0, ok=0))
+    mae = n_mae = 0
+    for c, p_ in zip(typed_dev, probs):
+        pred = max(p_, key=p_.get)
+        qt = types.get(c.id, "?")
+        stats[qt]["n"] += 1
+        stats[qt]["ok"] += int(pred == c.target_option)
+        if qt == "score":
+            idx = c.option_ids.index(c.target_option)
+            ev = sum(i * p_[oid] for i, oid in enumerate(c.option_ids))
+            mae += abs(ev - idx)
+            n_mae += 1
+    result = {
+        "arm": "base_ord",
+        "hypothesis": "unimodal soft targets on score rows fix confident adjacent-level confusions",
+        "control": "base_fresh (same data/init/recipe)",
+        "ordinal_train_rows": len(ordinal_ids),
+        "best_dev_accuracy": report["best_dev_accuracy"],
+        "dev_by_type": {k: {"acc": v["ok"] / v["n"], "n": v["n"]} for k, v in stats.items()},
+        "dev_score_mae": mae / n_mae if n_mae else None,
+        "history": report["history"],
+    }
+    (work / "typed_ord_results.json").write_text(_json.dumps(result, indent=2), encoding="utf-8")
+    log(f"base_ord dev by type: {result['dev_by_type']} mae={result['dev_score_mae']}")
+    (work / "run_status.json").write_text(
+        _json.dumps({"stage": "typed_ord", "best_dev": report["best_dev_accuracy"]}, indent=2),
+        encoding="utf-8",
+    )
+
+
+STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1, "typed_ord": stage_typed_ord}

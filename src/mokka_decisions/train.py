@@ -170,6 +170,15 @@ def save_full_checkpoint(
     _atomic_torch_save(payload, path)
 
 
+def ordinal_soft_target(k: int, gold: int, tau: float = 1.0):
+    """Unimodal soft labels for ordinal options: bump at gold, mass on neighbours."""
+    import math as _m
+
+    weights = [_m.exp(-abs(j - gold) / tau) for j in range(k)]
+    total = sum(weights)
+    return [w / total for w in weights]
+
+
 def run_training(
     cfg: TrainConfig,
     *,
@@ -179,6 +188,8 @@ def run_training(
     resume_from: str | Path | None = None,
     data_manifest_hash: str = "",
     progress_cb=None,
+    ordinal_case_ids: set[str] | None = None,
+    ordinal_tau: float = 1.0,
 ) -> dict:
     """Train and return a report; checkpoints land in cfg.output_dir."""
     out_dir = Path(cfg.output_dir)
@@ -269,7 +280,24 @@ def run_training(
                     max_options=batch["max_options"],
                     option_slot=batch["option_slot"],
                 )
-                loss = F.cross_entropy(logits, batch["targets"]) / cfg.grad_accumulation
+                if ordinal_case_ids:
+                    # H1: unimodal soft targets on ordinal (score) rows; hard CE elsewhere
+                    logp = F.log_softmax(logits.float(), dim=-1)
+                    losses = []
+                    for r, case in enumerate(cases):
+                        k = len(case.options)
+                        gold = int(batch["targets"][r].item())
+                        if case.id in ordinal_case_ids and gold >= 0:
+                            soft = torch.tensor(
+                                ordinal_soft_target(k, gold, ordinal_tau),
+                                device=logits.device, dtype=logp.dtype,
+                            )
+                            losses.append(-(soft * logp[r, :k]).sum())
+                        else:
+                            losses.append(-logp[r, gold])
+                    loss = torch.stack(losses).mean() / cfg.grad_accumulation
+                else:
+                    loss = F.cross_entropy(logits, batch["targets"]) / cfg.grad_accumulation
             scaler.scale(loss).backward()
             running_loss += float(loss.item()) * cfg.grad_accumulation
 

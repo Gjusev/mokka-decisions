@@ -61,6 +61,7 @@ def main() -> int:
 
     cases = pq.read_table(parquet).to_pylist()
     rows_by_split: dict[str, list[DecisionCase]] = collections.defaultdict(list)
+    typed_rows: dict[str, list[dict]] = collections.defaultdict(list)
     qtypes = collections.Counter()
     for case in cases:
         state = json.loads(case["state"])
@@ -80,27 +81,29 @@ def main() -> int:
                 continue  # gold outside keys (shouldn't happen; count below)
             options = tuple(Option(id=f"o{i}", description=criteria[k]) for i, k in enumerate(keys))
             gold_idx = keys.index(str(gold[question_id]["label"]))
-            rows_by_split[split].append(
-                DecisionCase(
-                    id=f"{case['id']}:{question_id}",
-                    group_id=case["id"],
-                    source="typed-decisions-train",
-                    language="en",
-                    domain="benchmark",
-                    state=state_text,
-                    question=question["instructions"],
-                    options=options,
-                    target_kind="single",
-                    target_option=f"o{gold_idx}",
-                    label_origin="benchmark-gold",
-                    split=split if split != "cal" else "cal_temperature",
-                )
+            d = DecisionCase(
+                id=f"{case['id']}:{question_id}",
+                group_id=case["id"],
+                source="typed-decisions-train",
+                language="en",
+                domain="benchmark",
+                state=state_text,
+                question=question["instructions"],
+                options=options,
+                target_kind="single",
+                target_option=f"o{gold_idx}",
+                label_origin="benchmark-gold",
+                split=split if split != "cal" else "cal_temperature",
             )
+            row = d.to_dict()
+            row["question_type"] = kind  # choice | noul | score (for typed losses)
+            rows_by_split[split].append(d)
+            typed_rows[split].append(row)
 
     counts = {}
     (out / "cases").mkdir(parents=True, exist_ok=True)
     for split, rows in rows_by_split.items():
-        dump_jsonl([r.to_dict() for r in rows], out / "cases" / f"{split}.jsonl")
+        dump_jsonl(typed_rows[split], out / "cases" / f"{split}.jsonl")
         counts[split] = len(rows)
         print(f"{split}: {len(rows)} question rows")
     manifest = {
