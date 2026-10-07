@@ -383,12 +383,25 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
         import venv as _venv
 
         venv_dir = Path("/tmp/gliner-venv")
-        if not (venv_dir / "bin" / "python").exists():
-            _venv.create(str(venv_dir), with_pip=True)
         vpy = str(venv_dir / "bin" / "python")
+        if not Path(vpy).exists():
+            import shutil as _sh
+
+            if _sh.which("uv"):
+                subprocess.check_call(["uv", "venv", str(venv_dir)])
+                # uv installs with --python of the venv
+                def _uv_install(*pkgs):
+                    subprocess.check_call(["uv", "pip", "install", "--python", vpy, "--quiet", *pkgs])
+            else:
+                _venv.create(str(venv_dir), with_pip=True)
+
+                def _uv_install(*pkgs):
+                    subprocess.check_call([vpy, "-m", "pip", "install", "--quiet", *pkgs])
+        else:
+            def _uv_install(*pkgs):
+                subprocess.check_call([vpy, "-m", "pip", "install", "--quiet", *pkgs])
         wheel = sorted(bundle.rglob("*.whl"))[0]
-        subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
-                               str(wheel), "pyyaml", "safetensors"])
+        _uv_install(str(wheel), "pyyaml", "safetensors")
         # CUDA torch in the venv when the kernel has a GPU (matches cu128);
         # fall back to CPU torch otherwise
         import torch as _torch
@@ -400,8 +413,7 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
                                        "https://download.pytorch.org/whl/cu128"])
             except Exception as exc:
                 log(f"cuda torch in venv failed ({exc}); gliner falls back to CPU")
-        subprocess.check_call([vpy, "-m", "pip", "install", "--quiet",
-                               "gliner2[local]>=2.0", "transformers<5"])
+        _uv_install("gliner2[local]>=2.0", "transformers<5")
         gliner_ok = True
         log("gliner venv ready (isolated, transformers<5)")
     except Exception as exc:
@@ -480,7 +492,7 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--stage", default="typed_arms",
+        "--stage", default="typed_a1",
         help="comma-separated stages: smoke,train,resume_test,eval,baselines",
     )
     parser.add_argument("--config", default="configs/train.yaml")  # bundle v1 carries pilot-budget data

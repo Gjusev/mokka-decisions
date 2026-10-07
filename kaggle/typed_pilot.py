@@ -78,7 +78,7 @@ def stage_typed_arms(bundle: Path, work: Path, config: str) -> None:
     log(f"typed data: train={len(train)} dev={len(dev)} cal={len(cal)}")
 
     # our released checkpoint as the init arm's starting point
-    ckpts = sorted(glob.glob("/kaggle/input/*/model_best.safetensors"))
+    ckpts = sorted(glob.glob("/kaggle/input/**/model_best.safetensors", recursive=True))
     init_path = ckpts[0] if ckpts else ""
     log(f"init checkpoint: {init_path or '(none attached; base_init arm skipped)'}")
 
