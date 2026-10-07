@@ -105,7 +105,19 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 - **Interpretación**: la arquitectura de marcadores tal cual NO explica la ventaja de Julia; empeora con nuestra receta. La brecha restante de A0 vs Julia (−4,8 pp) apunta a receta/pérdidas/datos de entrenamiento (H1: pérdida ordinal; después: épocas/LR si hiciera falta), no a «una sola secuencia».
 - Hipótesis A1 DESCARTADA con esta configuración; código y pesos conservados (runs/kaggle-typed-a1/). Sesión cancelada al confirmar completado para preservar cuota (total ≈ 5 h wall).
 
-## E11 — typed_ord / H1 (kernel mokka-typed-ord, en ejecución)
+## E11 — typed_ord / H1 (kernel mokka-typed-ord) — CONFIRMADA en dev
 
-- Hipótesis: las confusiones ordinales adyacentes confiadas (diagnóstico dev K4: 0,628, errores p≈0,7–0,95 entre niveles vecinos) se corrigen con objetivo unimodal (soft targets, tau=1) en filas score.
-- Control: base_fresh (misma semilla/receta/datos); selección en dev por accuracy score y MAE.
+- Hipótesis: las confusiones ordinales adyacentes confiadas se corrigen con objetivo unimodal (soft targets, tau=1) en filas score (1.980 de 4.950 train).
+- **Dev: 0,7123 vs control 0,6912 (+2,1 pp)** — mejora en los tres tipos: choice 0,7471 · noul 0,7733 · score 0,6404. MAE dev 0,584.
+- **Test histórico (exposición declarada, no usado para seleccionar): 0,7045 (1.409/2.000)** vs base_fresh 0,678 → +2,65 pp por la pérdida ordinal. choice 0,698 · noul 0,818 (+6,0) · score 0,624. MAE 0,602. Brecha con Julia reproducida (0,7255): **−2,1 pp** (era −4,8).
+- Latencia CPU batch=16: 1.448 s / 2.000 preguntas ≈ 724 ms/preg (lote); Julia oficial: 324 s / 2.000 ≈ 162 ms/preg batch=1 en el mismo CPU de 8 hilos — no competimos en coste con 307M vs 144M (eje honesto).
+
+## E12 — small_ord / transferencia de receta (kernel mokka-typed-small-ord) — COMPLETADO
+
+- Misma receta ganadora en mmBERT-small (140M, 4 épocas): dev 0,6439 vs small_fresh 0,6386 (**+0,5 pp** — transferencia débil; el límite de capacidad domina). Por tipo: choice 0,665 · noul 0,709 · score 0,579.
+- Lectura: la receta ordinal ayuda mucho a Base y poco a Small; a igual tamaño seguimos lejos de Julia (small_fresh test 0,5345 vs 0,7255).
+
+## E13 — Holdout congelado por dominio (frozen v1.0)
+
+- Particiones: los 4 configs de dominio del test pineado (= all/test; agregado ya consultado — exposición declarada; números por dominio jamás usados para ajustar).
+- En ejecución: Julia (motor oficial, CPU) y base_ord (protocolo idéntico) sobre las mismas particiones.
