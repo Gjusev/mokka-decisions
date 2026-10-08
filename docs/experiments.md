@@ -121,7 +121,9 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 
 - Particiones: los 4 configs de dominio del test pineado (= all/test; agregado ya consultado — exposición declarada; números por dominio jamás usados para ajustar).
 - Julia (motor oficial, CPU 8 hilos): agent_trace 348/500=0,696 · customer_service 352/500=0,704 · invoice 398/500=0,796 · security 353/500=0,706 · **TOTAL 1.451/2.000=0,7255** — coincide exactamente con la reproducción agregada (integridad de particiones confirmada). Artefactos: `runs/typed-decisions/julia_holdout_domains.json`.
-- base_ord (protocolo idéntico, per-case dump para McNemar emparejado): en ejecución local.
+- base_ord (protocolo idéntico, per-case dump para McNemar emparejado): agent_trace 336/500=0,672 · customer_service 355/500=0,710 · invoice 382/500=0,764 · security 336/500=0,672 · **TOTAL 1.409/2.000=0,7045** — coincide exactamente con el test histórico (integridad confirmada en ambos lados). Por dominio vs Julia: −2,4 / **+0,6** / −3,2 / −3,4 pp (solo customer_service por delante). score MAE 0,497–0,789 según dominio. Artefactos: `runs/typed-decisions/base_ord_holdout_domains.json` + `base_ord_holdout_percase.jsonl`.
+
+- **Emparejado por caso (McNemar exacto + bootstrap por caso original, n=2.000)**: diff +2,1 pp · discordantes 235 solo-Julia vs 193 solo-Mokka · **p=0,047** · CI 95 % [0,000, 0,042]. La ventaja de Julia es estadísticamente real pero fronteriza — el intervalo toca cero. Rerun de Julia verificado determinista (mismos 348/352/398/353). Artefactos: `runs/typed-decisions/holdout_paired_stats.json`.
 
 ## E14 — H2 épocas extendidas (kernel mokka-typed-ord v2) — EN EJECUCIÓN
 
