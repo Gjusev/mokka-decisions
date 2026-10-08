@@ -1,10 +1,12 @@
-"""FROZEN holdout evaluation: typed-decisions pinned test, per-domain partitions.
+"""Typed-decisions pinned test BROKEN DOWN BY DOMAIN (frozen v1.0 partitions).
 
-Frozen BEFORE any finalist selection (2026-10-08), per the focused-research
-commission. Exposure declaration: the aggregate of all/test has been
+CORRECTION (2026-10-08 review): this is NOT an independent holdout. The four
+domain configs are a partition of all/test whose AGGREGATE was already
 consulted during arm development (Julia reproduction, zero-shot, A0 arms);
-PER-DOMAIN results have never been computed or used for any decision. This
-script fixes the evaluation so the finalist cannot be tuned per-domain.
+per-domain numbers were never used for tuning, but freezing a breakdown does
+not create independence. Recorded as "historical test broken down by domain,
+exposure declared". A genuinely independent set is designed separately in
+docs/typed-independent-eval-protocol.md.
 
 Domains (pinned revision c76749ec…): agent_trace_observability,
 customer_service, invoice_processing, security_incidents — 100 cases each

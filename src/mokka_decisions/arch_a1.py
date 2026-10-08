@@ -46,13 +46,22 @@ class MarkerScorer(nn.Module):
 
     # -- marker management -------------------------------------------------
     def ensure_markers(self, k: int) -> None:
-        """Add [O_i] special tokens (idempotent); resize embeddings once."""
+        """Add [O_i] special tokens (idempotent); resize embeddings once.
+
+        n_markers is the COUNT of markers created (0..k), never a token id —
+        the previous implementation stored id([O_last])+1 (≈ vocab size), which
+        made every later expansion a silent no-op and marker_ids() iterate
+        ~vocab times. Found by the 2026-10-08 review; not the measured cause
+        of A1's accuracy loss (typed data has K<=16, so no decision was
+        dropped), but latent for K>16.
+        """
+        k = min(k, MAX_MARKERS)
         if k <= self.n_markers:
             return
-        new_tokens = [f"[O{i}]" for i in range(self.n_markers, min(k, MAX_MARKERS))]
+        new_tokens = [f"[O{i}]" for i in range(self.n_markers, k)]
         self.tokenizer.add_special_tokens({"additional_special_tokens": new_tokens})
         self.encoder.resize_token_embeddings(len(self.tokenizer))
-        self.n_markers = self.tokenizer.convert_tokens_to_ids(new_tokens[-1]) + 1
+        self.n_markers = k
 
     def marker_ids(self) -> list[int]:
         return [self.tokenizer.convert_tokens_to_ids(f"[O{i}]") for i in range(self.n_markers)]

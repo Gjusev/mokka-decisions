@@ -190,6 +190,7 @@ def run_training(
     progress_cb=None,
     ordinal_case_ids: set[str] | None = None,
     ordinal_tau: float = 1.0,
+    soft_targets: dict[str, Sequence[float]] | None = None,
 ) -> dict:
     """Train and return a report; checkpoints land in cfg.output_dir."""
     out_dir = Path(cfg.output_dir)
@@ -280,18 +281,26 @@ def run_training(
                     max_options=batch["max_options"],
                     option_slot=batch["option_slot"],
                 )
-                if ordinal_case_ids:
-                    # H1: unimodal soft targets on ordinal (score) rows; hard CE elsewhere
+                if soft_targets or ordinal_case_ids:
+                    # soft-CE branch: per-decision target vectors
+                    # (E15) soft_targets: dataset-native distributions by case id;
+                    # (H1) ordinal_case_ids: artificial unimodal exp(-|j-gold|/tau)
                     logp = F.log_softmax(logits.float(), dim=-1)
                     losses = []
                     for r, case in enumerate(cases):
                         k = len(case.options)
                         gold = int(batch["targets"][r].item())
-                        if case.id in ordinal_case_ids and gold >= 0:
-                            soft = torch.tensor(
-                                ordinal_soft_target(k, gold, ordinal_tau),
-                                device=logits.device, dtype=logp.dtype,
-                            )
+                        vec = None
+                        if soft_targets is not None and case.id in soft_targets:
+                            vec = soft_targets[case.id]
+                        elif ordinal_case_ids and case.id in ordinal_case_ids and gold >= 0:
+                            vec = ordinal_soft_target(k, gold, ordinal_tau)
+                        if vec is not None:
+                            if len(vec) != k:
+                                raise SystemExit(
+                                    f"soft target length {len(vec)} != options {k} for {case.id}"
+                                )
+                            soft = torch.as_tensor(vec, device=logits.device, dtype=logp.dtype)
                             losses.append(-(soft * logp[r, :k]).sum())
                         else:
                             losses.append(-logp[r, gold])

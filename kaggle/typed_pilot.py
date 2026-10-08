@@ -520,9 +520,151 @@ def stage_typed_small_ord(bundle: Path, work: Path, config: str, epochs: int = 4
     )
 
 
+def stage_typed_e15(bundle: Path, work: Path, config: str) -> None:
+    """E15: dataset-native score supervision vs the artificial ordinal target.
+
+    Control (e15_control): the base_ord recipe exactly — artificial unimodal
+    targets exp(-|j-gold|/tau=1) on score rows, hard CE on choice/noul.
+    Candidate (e15_probs): identical data, init, batch, optimizer, steps,
+    LR schedule and selection; ONLY the score-row target vector changes to
+    the original gold.probabilities of the train split (soft CE).
+    Pre-fixed selection: best dev accuracy (same criterion as every arm).
+    Recorded metrics per arm: accuracy by type, mean NLL (hard label),
+    KL(gold||model) on all dev rows, multiclass Brier, score MAE.
+    Dev probabilities are used for METRICS only, never for training.
+    """
+    import collections
+    import math
+    import time as _time
+
+    import torch
+
+    if not torch.cuda.is_available():
+        raise SystemExit("typed_e15 needs the GPU that was not assigned")
+    root = _find_typed_root(bundle)
+    train = _load(root, "train")
+    dev = _load(root, "dev")
+    import json as _json
+
+    def _load_probs(split: str) -> dict:
+        rows = [
+            _json.loads(l)
+            for l in (root / "cases" / f"probabilities_{split}.jsonl").read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+        return {r["id"]: r for r in rows}
+
+    probs_train = _load_probs("train")
+    probs_dev = _load_probs("dev")
+    qtypes = {
+        _json.loads(l)["id"]: _json.loads(l).get("question_type", "?")
+        for l in (root / "cases" / "train.jsonl").read_text(encoding="utf-8").splitlines()
+        if l.strip()
+    }
+    # candidate targets: dataset-native distributions on score rows only
+    soft_targets = {}
+    for c in train:
+        if qtypes.get(c.id) == "score":
+            row = probs_train.get(c.id)
+            if row is None or len(row["probabilities"]) != len(c.options):
+                raise SystemExit(f"probabilities misaligned for {c.id}")
+            s = sum(row["probabilities"])
+            if abs(s - 1.0) > 1e-3:
+                raise SystemExit(f"probabilities not normalised for {c.id} (sum={s})")
+            soft_targets[c.id] = row["probabilities"]
+    ordinal_ids = {i for i, t in qtypes.items() if t == "score"}
+    log(f"typed_e15: train={len(train)} dev={len(dev)} score_rows={len(ordinal_ids)} "
+        f"soft_targets={len(soft_targets)} dev_probs={len(probs_dev)}")
+    assert set(soft_targets) == ordinal_ids, "every score train row must carry its distribution"
+
+    from mokka_decisions.train import TrainConfig, run_training
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained("jhu-clsp/mmBERT-base")
+
+    def _arm(name: str, *, ordinal: bool) -> dict:
+        cfg = TrainConfig(
+            encoder_name="jhu-clsp/mmBERT-base",
+            max_length=512, microbatch=4, grad_accumulation=8, epochs=3,
+            encoder_lr=2e-5, head_lr=1e-4, seed=42, amp=True,
+            output_dir=str(work / name), max_options_per_step=32,
+        )
+        t0 = _time.time()
+        report = run_training(
+            cfg, train_cases=train, dev_cases=dev, tokenizer=tokenizer,
+            ordinal_case_ids=ordinal_ids if ordinal else None, ordinal_tau=1.0,
+            soft_targets=None if ordinal else soft_targets,
+        )
+        log(f"{name} trained in {_time.time()-t0:.0f}s best_dev={report['best_dev_accuracy']}")
+        return report
+
+    report_c = _arm("e15_control", ordinal=True)
+    report_p = _arm("e15_probs", ordinal=False)
+
+    # ---- dev metrics for both arms (checkpoint_best of each) ----
+    from mokka_decisions.model import OptionScorer, ScorerInference, load_checkpoint
+
+    def _metrics(name: str) -> dict:
+        m = OptionScorer("jhu-clsp/mmBERT-base")
+        load_checkpoint(m, work / name / "checkpoint_best.safetensors")
+        sc = ScorerInference(m, tokenizer, device="cuda", temperature=1.0, max_length=512, batch_decisions=16)
+        typed_dev = [c for c in dev if c.target_option]
+        probs = sc.score(typed_dev)
+        stats = collections.defaultdict(lambda: dict(n=0, ok=0))
+        nll = n = 0
+        kl = n_kl = 0
+        brier = n_br = 0
+        mae = n_mae = 0
+        for c, p_ in zip(typed_dev, probs):
+            qt = probs_dev[c.id]["question_type"] if c.id in probs_dev else qtypes.get(c.id, "?")
+            vec = probs_dev[c.id]["probabilities"] if c.id in probs_dev else None
+            gold_idx = c.option_ids.index(c.target_option)
+            pv = [p_[oid] for oid in c.option_ids]
+            stats[qt]["n"] += 1
+            stats[qt]["ok"] += int(max(p_, key=p_.get) == c.target_option)
+            eps = 1e-12
+            nll += -math.log(max(pv[gold_idx], eps)); n += 1
+            if vec is not None and len(vec) == len(pv):
+                kl += sum(v * (math.log(max(v, eps)) - math.log(max(pi, eps)))
+                          for v, pi in zip(vec, pv) if v > 0)
+                n_kl += 1
+                brier += sum((pi - (1.0 if i == gold_idx else 0.0)) ** 2 for i, pi in enumerate(pv))
+                n_br += 1
+            if qt == "score":
+                ev = sum(i * pi for i, pi in enumerate(pv))
+                mae += abs(ev - gold_idx); n_mae += 1
+        return {
+            "dev_by_type": {k: {"acc": v["ok"] / v["n"], "n": v["n"]} for k, v in stats.items()},
+            "mean_nll": nll / n if n else None,
+            "mean_kl_gold_vs_model": kl / n_kl if n_kl else None,
+            "mean_brier_multiclass": brier / n_br if n_br else None,
+            "dev_score_mae": mae / n_mae if n_mae else None,
+        }
+
+    result = {
+        "experiment": "E15 dataset-native score supervision",
+        "selection_criterion": "best dev accuracy (pre-fixed)",
+        "control": {"arm": "e15_control", "best_dev_accuracy": report_c["best_dev_accuracy"],
+                    "history": report_c["history"], **_metrics("e15_control")},
+        "candidate": {"arm": "e15_probs", "best_dev_accuracy": report_p["best_dev_accuracy"],
+                      "history": report_p["history"], **_metrics("e15_probs")},
+        "note": "candidate differs ONLY in score-row targets (original probabilities via soft CE); "
+                "choice/noul untouched; same data/init/batch/optimizer/steps/schedule/seed.",
+    }
+    (work / "e15_results.json").write_text(_json.dumps(result, indent=2), encoding="utf-8")
+    log(f"e15: control dev={report_c['best_dev_accuracy']:.4f} probs dev={report_p['best_dev_accuracy']:.4f}")
+    (work / "run_status.json").write_text(
+        _json.dumps({"stage": "typed_e15",
+                     "control_dev": report_c["best_dev_accuracy"],
+                     "candidate_dev": report_p["best_dev_accuracy"]}, indent=2),
+        encoding="utf-8",
+    )
+
+
 STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1,
           "typed_ord": stage_typed_ord, "typed_small_ord": stage_typed_small_ord,
+          "typed_e15": stage_typed_e15,
           # H2 (controlled, one variable): the dev curves were not saturated at
-          # 3/4 epochs; extend epochs only — data/init/loss/seeds unchanged.
+          # 4/8 epochs; extend epochs only — data/init/loss/seeds unchanged.
           "typed_ord2": lambda b, w, c: stage_typed_ord(b, w, c, epochs=6, out="base_ord6"),
           "typed_small_ord2": lambda b, w, c: stage_typed_small_ord(b, w, c, epochs=8, out="small_ord8")}
