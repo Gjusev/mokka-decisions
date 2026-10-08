@@ -132,6 +132,16 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 - **base_ord6 dev 0,7333** (época 4; +2,1 pp vs 0,7123) — choice 0,735 · noul 0,797 · score 0,684 · MAE 0,562. La curva ahora sí se satura (época 5: 0,7263; las trayectorias por época difieren del run de 3 por el schedule de LR sobre el doble de pasos). **Nuevo finalista dev.**
 - **small_ord8 dev 0,6404** vs 0,6439 (4 épocas) — sin mejora; Small confirmado limitado por capacidad, no por entrenamiento. Rama Small no avanza por receta.
 - Selección por dev: base_ord6. Test histórico + holdout congelado en ejecución local (misma pasada: el test histórico ES la unión de las particiones del holdout, verificado en E13). Cuota GPU verificada antes del push (~17,8 h restantes).
+- **Test/holdout: 0,6925 (1.385/2.000) — PEOR que base_ord 3 épocas (0,7045) pese a ganar en dev.** Por dominio: agent_trace 0,710 (**+1,4 vs Julia**, el único por delante) · customer_service 0,616 (colapso −9,4 pp vs 3ep) · invoice 0,762 · security 0,682. McNemar vs Julia: +3,3 pp, p=0,0025, CI 95 % [0,0095, 0.058]. Artefactos: `runs/typed-decisions/base_ord6_holdout_domains.json` + percase + paired stats.
+- **Lecturas**: (1) dev (570 preguntas) es demasiado pequeño para seleccionar recetas — divergencia dev→test documentada; (2) la varianza entre runs a esta escala (4.950 train) es alta — dos recetas casi idénticas difieren 9,4 pp en un dominio; diferencias <2-3 pp entre runs únicos no son concluyentes. La mejora ordinal de E11 sí se sostuvo en dev Y test simultáneamente (más creíble); la de épocas no transfirió.
+- **H2 RECHAZADA.** Levers de receta agotados: A1 arquitectura ✗ (−14,4 pp) · H1 ordinal ✓ (+2,65 pp estable) · H2 épocas ✗ (dev sí, test no) · Small +épocas ✗ (capacity-limited).
+
+## Síntesis de la investigación enfocada (cierre de fase, 2026-10-08)
+
+- **Ventaja sobre Julia-1 NO demostrada** — ni en calidad (mejor nuestro: 0,7045 vs 0,7255, −2,1 pp, p=0,047 fronterizo) ni en coste (307M vs 144M; 724 vs 162 ms/preg CPU). El objetivo ≥+3 pp accuracy o ≥30 % p95 con ≤1 pp de pérdida NO se alcanza.
+- **Contribución interna medida y estable**: pérdida ordinal unimodal (+2,65 pp test, consistente dev+test). Negativos documentados con medición limpia: A1 marcadores, H2 épocas, Small a igual tamaño.
+- **Nota de presupuesto honesto**: Julia entrenó con todo el train (~6.000 preguntas); nosotros reservamos 1.050 (dev+cal) para selección honesta → 4.950. Parte de la brecha puede ser presupuesto de datos, no receta.
+- **Decisión de suite**: Nano/Vision/Fast/Qwen quedan EN ESPERA — sin ventaja demostrada que escalar. Mejores próximos pasos con evidencia: (a) más datos tipados (el lever que nunca se ha tocado), (b) destilación de un teacher competente, (c) si se sigue iterando receta: replicar por semillas (≥3) porque la varianza run-a-run domina a <3 pp.
 
 - Diagnóstico que lo motiva: las curvas dev NO estaban saturadas — base_ord +2,8 pp en su última época (0,6842→0,7123), small_ord +3,5 pp (0,6088→0,6439). La brecha restante vs Julia (−2,1 pp) puede ser parcialmente de subentrenamiento.
 - Experimento controlado de UNA variable: **typed_ord2** = base_ord con epochs 3→6 (base_ord6) y **typed_small_ord2** = small_ord con epochs 4→8 (small_ord8); datos/inicialización/pérdida ordinal/semillas idénticos.
