@@ -125,7 +125,13 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 
 - **Emparejado por caso (McNemar exacto + bootstrap por caso original, n=2.000)**: diff +2,1 pp · discordantes 235 solo-Julia vs 193 solo-Mokka · **p=0,047** · CI 95 % [0,000, 0,042]. La ventaja de Julia es estadísticamente real pero fronteriza — el intervalo toca cero. Rerun de Julia verificado determinista (mismos 348/352/398/353). Artefactos: `runs/typed-decisions/holdout_paired_stats.json`.
 
-## E14 — H2 épocas extendidas (kernel mokka-typed-ord v2) — EN EJECUCIÓN
+## E14 — H2 épocas extendidas (kernel mokka-typed-ord v2) — COMPLETADO
+
+- Diagnóstico que lo motiva: las curvas dev NO estaban saturadas — base_ord +2,8 pp en su última época (0,6842→0,7123), small_ord +3,5 pp (0,6088→0,6439). La brecha restante vs Julia (−2,1 pp) puede ser parcialmente de subentrenamiento.
+- Experimento controlado de UNA variable: **typed_ord2** = base_ord con epochs 3→6 (base_ord6) y **typed_small_ord2** = small_ord con epochs 4→8 (small_ord8); datos/inicialización/pérdida ordinal/semillas idénticos.
+- **base_ord6 dev 0,7333** (época 4; +2,1 pp vs 0,7123) — choice 0,735 · noul 0,797 · score 0,684 · MAE 0,562. La curva ahora sí se satura (época 5: 0,7263; las trayectorias por época difieren del run de 3 por el schedule de LR sobre el doble de pasos). **Nuevo finalista dev.**
+- **small_ord8 dev 0,6404** vs 0,6439 (4 épocas) — sin mejora; Small confirmado limitado por capacidad, no por entrenamiento. Rama Small no avanza por receta.
+- Selección por dev: base_ord6. Test histórico + holdout congelado en ejecución local (misma pasada: el test histórico ES la unión de las particiones del holdout, verificado en E13). Cuota GPU verificada antes del push (~17,8 h restantes).
 
 - Diagnóstico que lo motiva: las curvas dev NO estaban saturadas — base_ord +2,8 pp en su última época (0,6842→0,7123), small_ord +3,5 pp (0,6088→0,6439). La brecha restante vs Julia (−2,1 pp) puede ser parcialmente de subentrenamiento.
 - Experimento controlado de UNA variable: **typed_ord2** = base_ord con epochs 3→6 (base_ord6) y **typed_small_ord2** = small_ord con epochs 4→8 (small_ord8); datos/inicialización/pérdida ordinal/semillas idénticos.
