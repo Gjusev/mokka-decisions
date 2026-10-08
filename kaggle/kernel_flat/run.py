@@ -493,7 +493,7 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--stage", default="typed_e15",
+        "--stage", default="typed_e15_seeds",
         help="comma-separated stages: smoke,train,resume_test,eval,baselines",
     )
     parser.add_argument("--config", default="configs/train.yaml")  # bundle v1 carries pilot-budget data
@@ -1499,8 +1499,11 @@ def stage_typed_small_ord(bundle: Path, work: Path, config: str, epochs: int = 4
     )
 
 
-def stage_typed_e15(bundle: Path, work: Path, config: str) -> None:
+def stage_typed_e15(bundle: Path, work: Path, config: str, seed: int = 42, arms: str = "both") -> None:
     """E15: dataset-native score supervision vs the artificial ordinal target.
+
+    seed/arms parametrise the matched-seed replication (seed 42 ran as v1);
+    arms: "both" | "control" | "probs".
 
     Control (e15_control): the base_ord recipe exactly — artificial unimodal
     targets exp(-|j-gold|/tau=1) on score rows, hard CE on choice/noul.
@@ -1565,7 +1568,7 @@ def stage_typed_e15(bundle: Path, work: Path, config: str) -> None:
         cfg = TrainConfig(
             encoder_name="jhu-clsp/mmBERT-base",
             max_length=512, microbatch=4, grad_accumulation=8, epochs=3,
-            encoder_lr=2e-5, head_lr=1e-4, seed=42, amp=True,
+            encoder_lr=2e-5, head_lr=1e-4, seed=seed, amp=True,
             output_dir=str(work / name), max_options_per_step=32,
         )
         t0 = _time.time()
@@ -1577,8 +1580,10 @@ def stage_typed_e15(bundle: Path, work: Path, config: str) -> None:
         log(f"{name} trained in {_time.time()-t0:.0f}s best_dev={report['best_dev_accuracy']}")
         return report
 
-    report_c = _arm("e15_control", ordinal=True)
-    report_p = _arm("e15_probs", ordinal=False)
+    name_c = f"e15_control_s{seed}"
+    name_p = f"e15_probs_s{seed}"
+    report_c = _arm(name_c, ordinal=True) if arms in ("both", "control") else None
+    report_p = _arm(name_p, ordinal=False) if arms in ("both", "probs") else None
 
     # ---- dev metrics for both arms (checkpoint_best of each) ----
     from mokka_decisions.model import OptionScorer, ScorerInference, load_checkpoint
@@ -1622,27 +1627,45 @@ def stage_typed_e15(bundle: Path, work: Path, config: str) -> None:
 
     result = {
         "experiment": "E15 dataset-native score supervision",
+        "seed": seed,
         "selection_criterion": "best dev accuracy (pre-fixed)",
-        "control": {"arm": "e15_control", "best_dev_accuracy": report_c["best_dev_accuracy"],
-                    "history": report_c["history"], **_metrics("e15_control")},
-        "candidate": {"arm": "e15_probs", "best_dev_accuracy": report_p["best_dev_accuracy"],
-                      "history": report_p["history"], **_metrics("e15_probs")},
+        "control": ({"arm": name_c, "best_dev_accuracy": report_c["best_dev_accuracy"],
+                     "history": report_c["history"], **_metrics(name_c)}
+                    if report_c else None),
+        "candidate": ({"arm": name_p, "best_dev_accuracy": report_p["best_dev_accuracy"],
+                       "history": report_p["history"], **_metrics(name_p)}
+                      if report_p else None),
         "note": "candidate differs ONLY in score-row targets (original probabilities via soft CE); "
                 "choice/noul untouched; same data/init/batch/optimizer/steps/schedule/seed.",
     }
-    (work / "e15_results.json").write_text(_json.dumps(result, indent=2), encoding="utf-8")
-    log(f"e15: control dev={report_c['best_dev_accuracy']:.4f} probs dev={report_p['best_dev_accuracy']:.4f}")
+    (work / f"e15_s{seed}_results.json").write_text(_json.dumps(result, indent=2), encoding="utf-8")
+    log(f"e15 seed={seed}: " + " ".join(
+        f"{a['arm']} dev={a['best_dev_accuracy']:.4f}" for a in (result["control"], result["candidate"]) if a))
     (work / "run_status.json").write_text(
-        _json.dumps({"stage": "typed_e15",
-                     "control_dev": report_c["best_dev_accuracy"],
-                     "candidate_dev": report_p["best_dev_accuracy"]}, indent=2),
+        _json.dumps({"stage": f"typed_e15:seed{seed}", "seed": seed,
+                     "control_dev": result["control"]["best_dev_accuracy"] if result["control"] else None,
+                     "candidate_dev": result["candidate"]["best_dev_accuracy"] if result["candidate"] else None},
+                    indent=2),
         encoding="utf-8",
     )
 
 
+def stage_typed_e15_seeds(bundle: Path, work: Path, config: str) -> None:
+    """Matched-seed replication of E15 (commission 2026-10-08, step 3).
+
+    Seed 42 already ran in v1 (collected). Here: control seeds 43,44 and
+    candidate seeds 43,44,45 -> 3 seeds per recipe, matched pairs at
+    42/43/44 plus one extra candidate. Same kernel session so the paired
+    comparison avoids cross-session GPU variance.
+    """
+    for seed in (43, 44):
+        stage_typed_e15(bundle, work, config, seed=seed)
+    stage_typed_e15(bundle, work, config, seed=45, arms="probs")
+
+
 TYPED_STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1,
           "typed_ord": stage_typed_ord, "typed_small_ord": stage_typed_small_ord,
-          "typed_e15": stage_typed_e15,
+          "typed_e15": stage_typed_e15, "typed_e15_seeds": stage_typed_e15_seeds,
           # H2 (controlled, one variable): the dev curves were not saturated at
           # 4/8 epochs; extend epochs only — data/init/loss/seeds unchanged.
           "typed_ord2": lambda b, w, c: stage_typed_ord(b, w, c, epochs=6, out="base_ord6"),
