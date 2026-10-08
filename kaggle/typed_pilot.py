@@ -745,10 +745,70 @@ def stage_typed_e15_completion(bundle: Path, work: Path, config: str) -> None:
     log("e15_completion: done (probs s44 rerun complete + s45)")
 
 
+
+def stage_typed_julia_small(bundle: Path, work: Path, config: str) -> None:
+    """Faithful Julia-arch Small control: architecture and supervision as
+    SEPARATE variables (commission 2026-10-08/09 step 4).
+
+    2x2 with existing arms:
+      (A0-small, artificial)  = small_ord (E12, dev 0.6439)
+      (JuliaArch-small, artificial) = julias_ordinal  <-- NEW
+      (JuliaArch-small, native probs) = julias_probs  <-- NEW
+    Same data/splits/recipe/seeds as every arm; mmBERT-small encoder.
+    Fidelity: sequence() parity + model structure verified by
+    tests/test_arch_julia_serialization.py against the pinned upstream source.
+    """
+    import time as _time
+
+    import torch
+
+    if not torch.cuda.is_available():
+        raise SystemExit("typed_julia_small needs the GPU that was not assigned")
+    root = _find_typed_root(bundle)
+    train = _load(root, "train")
+    dev = _load(root, "dev")
+    import json as _json
+
+    def _load_probs(split: str) -> dict:
+        return {_json.loads(l)["id"]: _json.loads(l)
+                for l in (root / "cases" / f"probabilities_{split}.jsonl").read_text(encoding="utf-8").splitlines()
+                if l.strip()}
+
+    probs_train = _load_probs("train")
+    qtypes = {_json.loads(l)["id"]: _json.loads(l).get("question_type", "choice")
+              for l in (root / "cases" / "train.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()}
+    ordinal_ids = {i for i, t in qtypes.items() if t == "score"}
+    soft_targets = {i: probs_train[i]["probabilities"] for i in ordinal_ids}
+    log(f"julia_small: train={len(train)} dev={len(dev)} score_rows={len(ordinal_ids)}")
+
+    from mokka_decisions.arch_julia import JuliaArchScorer, train_julia_arch
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained("jhu-clsp/mmBERT-small")
+    for name, kwargs in (("julias_ordinal", dict(ordinal_case_ids=ordinal_ids)),
+                         ("julias_probs", dict(soft_targets=soft_targets))):
+        model = JuliaArchScorer("jhu-clsp/mmBERT-small")
+        t0 = _time.time()
+        report = train_julia_arch(
+            model, tokenizer, train, dev, qtypes,
+            output_dir=str(work / name), epochs=3, microbatch=4, grad_accumulation=8,
+            encoder_lr=2e-5, head_lr=1e-4, seed=42, device="cuda",
+            max_length=1024, head_length=256, **kwargs,
+        )
+        log(f"{name} trained in {_time.time()-t0:.0f}s best_dev={report['best_dev_accuracy']}")
+        latest = work / name / "checkpoint_latest.pt"
+        if latest.exists():
+            latest.unlink()  # keep /kaggle/working bounded (see v2 incident)
+        (work / "run_status.json").write_text(
+            _json.dumps({"stage": "typed_julia_small", "arm": name,
+                         "best_dev": report["best_dev_accuracy"]}, indent=2), encoding="utf-8")
+
+
 STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1,
           "typed_ord": stage_typed_ord, "typed_small_ord": stage_typed_small_ord,
           "typed_e15": stage_typed_e15, "typed_e15_seeds": stage_typed_e15_seeds,
           "typed_e15_completion": stage_typed_e15_completion,
+          "typed_julia_small": stage_typed_julia_small,
           # H2 (controlled, one variable): the dev curves were not saturated at
           # 4/8 epochs; extend epochs only — data/init/loss/seeds unchanged.
           "typed_ord2": lambda b, w, c: stage_typed_ord(b, w, c, epochs=6, out="base_ord6"),
