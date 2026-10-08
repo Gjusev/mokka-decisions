@@ -61,7 +61,7 @@ PROMPT_GLM53.md
 data/mm-v1/
 
 # derived typed-decisions training splits (rebuild via scripts/prepare_typed_train.py)
-data/typed-v1/
+data/
 
 # scratch bundle dirs
 kaggle-checkpoint-tmp/
