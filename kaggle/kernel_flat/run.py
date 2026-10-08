@@ -493,7 +493,7 @@ def stage_baselines(bundle: Path, work: Path, config: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--stage", default="typed_small_ord",
+        "--stage", default="typed_ord2,typed_small_ord2",
         help="comma-separated stages: smoke,train,resume_test,eval,baselines",
     )
     parser.add_argument("--config", default="configs/train.yaml")  # bundle v1 carries pilot-budget data
@@ -1321,13 +1321,14 @@ def stage_typed_a1(bundle: Path, work: Path, config: str) -> None:
     )
 
 
-def stage_typed_ord(bundle: Path, work: Path, config: str) -> None:
+def stage_typed_ord(bundle: Path, work: Path, config: str, epochs: int = 3, out: str = "base_ord") -> None:
     """H1 experiment: A0 base + ordinal soft-target loss on score rows.
 
     Hypothesis (from dev error diagnosis): score-type rows fail by confident
     adjacent-level confusions; a unimodal soft target (tau=1) on score rows
     should improve score accuracy and MAE without touching anything else.
     Control: base_fresh (same data, init, recipe, seeds) -> dev comparison.
+    typed_ord2 = H2: same recipe, epochs extended only (dev curve not saturated).
     """
     import time as _time
 
@@ -1357,9 +1358,9 @@ def stage_typed_ord(bundle: Path, work: Path, config: str) -> None:
 
     cfg = TrainConfig(
         encoder_name="jhu-clsp/mmBERT-base",
-        max_length=512, microbatch=4, grad_accumulation=8, epochs=3,
+        max_length=512, microbatch=4, grad_accumulation=8, epochs=epochs,
         encoder_lr=2e-5, head_lr=1e-4, seed=42, amp=True,
-        output_dir=str(work / "base_ord"), max_options_per_step=32,
+        output_dir=str(work / out), max_options_per_step=32,
     )
     tokenizer = AutoTokenizer.from_pretrained("jhu-clsp/mmBERT-base")
     t0 = _time.time()
@@ -1379,7 +1380,7 @@ def stage_typed_ord(bundle: Path, work: Path, config: str) -> None:
     from safetensors.torch import load_file
 
     m = OptionScorer("jhu-clsp/mmBERT-base")
-    load_checkpoint(m, work / "base_ord" / "checkpoint_best.safetensors")
+    load_checkpoint(m, work / out / "checkpoint_best.safetensors")
     sc = ScorerInference(m, tokenizer, device="cuda", temperature=1.0, max_length=512, batch_decisions=16)
     typed_dev = [c for c in dev if c.target_option]
     probs = sc.score(typed_dev)
@@ -1396,24 +1397,25 @@ def stage_typed_ord(bundle: Path, work: Path, config: str) -> None:
             mae += abs(ev - idx)
             n_mae += 1
     result = {
-        "arm": "base_ord",
+        "arm": out,
         "hypothesis": "unimodal soft targets on score rows fix confident adjacent-level confusions",
         "control": "base_fresh (same data/init/recipe)",
+        "epochs": epochs,
         "ordinal_train_rows": len(ordinal_ids),
         "best_dev_accuracy": report["best_dev_accuracy"],
         "dev_by_type": {k: {"acc": v["ok"] / v["n"], "n": v["n"]} for k, v in stats.items()},
         "dev_score_mae": mae / n_mae if n_mae else None,
         "history": report["history"],
     }
-    (work / "typed_ord_results.json").write_text(_json.dumps(result, indent=2), encoding="utf-8")
-    log(f"base_ord dev by type: {result['dev_by_type']} mae={result['dev_score_mae']}")
+    (work / f"{out}_results.json").write_text(_json.dumps(result, indent=2), encoding="utf-8")
+    log(f"{out} dev by type: {result['dev_by_type']} mae={result['dev_score_mae']}")
     (work / "run_status.json").write_text(
-        _json.dumps({"stage": "typed_ord", "best_dev": report["best_dev_accuracy"]}, indent=2),
+        _json.dumps({"stage": f"typed_ord:{out}", "best_dev": report["best_dev_accuracy"]}, indent=2),
         encoding="utf-8",
     )
 
 
-def stage_typed_small_ord(bundle: Path, work: Path, config: str) -> None:
+def stage_typed_small_ord(bundle: Path, work: Path, config: str, epochs: int = 4, out: str = "small_ord") -> None:
     """Recipe transfer: the dev-winning ordinal loss on mmBERT-small.
 
     Equal-parameter comparison vs Julia-1 (140M vs 144M) with the recipe that
@@ -1442,9 +1444,9 @@ def stage_typed_small_ord(bundle: Path, work: Path, config: str) -> None:
 
     cfg = TrainConfig(
         encoder_name="jhu-clsp/mmBERT-small",
-        max_length=512, microbatch=4, grad_accumulation=8, epochs=4,
+        max_length=512, microbatch=4, grad_accumulation=8, epochs=epochs,
         encoder_lr=2e-5, head_lr=1e-4, seed=42, amp=True,
-        output_dir=str(work / "small_ord"), max_options_per_step=32,
+        output_dir=str(work / out), max_options_per_step=32,
     )
     tokenizer = AutoTokenizer.from_pretrained("jhu-clsp/mmBERT-small")
     t0 = _time.time()
@@ -1463,7 +1465,7 @@ def stage_typed_small_ord(bundle: Path, work: Path, config: str) -> None:
     from safetensors.torch import load_file
 
     m = OptionScorer("jhu-clsp/mmBERT-small")
-    load_checkpoint(m, work / "small_ord" / "checkpoint_best.safetensors")
+    load_checkpoint(m, work / out / "checkpoint_best.safetensors")
     sc = ScorerInference(m, tokenizer, device="cuda", temperature=1.0, max_length=512, batch_decisions=16)
     typed_dev = [c for c in dev if c.target_option]
     probs = sc.score(typed_dev)
@@ -1480,24 +1482,29 @@ def stage_typed_small_ord(bundle: Path, work: Path, config: str) -> None:
             mae += abs(ev - idx)
             n_mae += 1
     result = {
-        "arm": "small_ord",
+        "arm": out,
         "hypothesis": "ordinal-loss recipe transfers from Base to Small",
         "control": "small_fresh (dev 0.6386, test 0.5345)",
+        "epochs": epochs,
         "best_dev_accuracy": report["best_dev_accuracy"],
         "dev_by_type": {k: {"acc": v["ok"] / v["n"], "n": v["n"]} for k, v in stats.items()},
         "dev_score_mae": mae / n_mae if n_mae else None,
         "history": report["history"],
     }
-    (work / "typed_small_ord_results.json").write_text(_json.dumps(result, indent=2), encoding="utf-8")
-    log(f"small_ord dev by type: {result['dev_by_type']} mae={result['dev_score_mae']}")
+    (work / f"{out}_results.json").write_text(_json.dumps(result, indent=2), encoding="utf-8")
+    log(f"{out} dev by type: {result['dev_by_type']} mae={result['dev_score_mae']}")
     (work / "run_status.json").write_text(
-        _json.dumps({"stage": "typed_small_ord", "best_dev": report["best_dev_accuracy"]}, indent=2),
+        _json.dumps({"stage": f"typed_small_ord:{out}", "best_dev": report["best_dev_accuracy"]}, indent=2),
         encoding="utf-8",
     )
 
 
 TYPED_STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1,
-          "typed_ord": stage_typed_ord, "typed_small_ord": stage_typed_small_ord}
+          "typed_ord": stage_typed_ord, "typed_small_ord": stage_typed_small_ord,
+          # H2 (controlled, one variable): the dev curves were not saturated at
+          # 3/4 epochs; extend epochs only — data/init/loss/seeds unchanged.
+          "typed_ord2": lambda b, w, c: stage_typed_ord(b, w, c, epochs=6, out="base_ord6"),
+          "typed_small_ord2": lambda b, w, c: stage_typed_small_ord(b, w, c, epochs=8, out="small_ord8")}
 
 # ==== embedded: gliner worker source (runs inside the isolated venv) ====
 GLINER_WORKER_SRC = "\"\"\"GLiNER2.5 worker: runs INSIDE an isolated venv (its own transformers<5).\n\nProtocol (argv): cases.jsonl rows_out.jsonl\nReads decision cases, writes BackendRow JSONL. Kept dependency-free of the\nmain kernel env: the parent installs this venv with the mokka wheel +\ngliner2[local] + transformers<5, then invokes this file with that venv's\npython. The main environment (trainer, future VLMs) stays untouched.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport json\nimport sys\nimport time\nfrom pathlib import Path\n\n\ndef main() -> int:\n    cases_path, out_path = Path(sys.argv[1]), Path(sys.argv[2])\n    sys.path.insert(0, str(Path(__file__).parent))\n\n    from mokka_decisions.backends.gliner import GlinerBackend\n    from mokka_decisions.contracts import DecisionCase\n    from mokka_decisions.evaluate import run_backend\n\n    cases = [DecisionCase.from_dict(json.loads(ln)) for ln in cases_path.read_text(encoding=\"utf-8\").splitlines() if ln.strip()]\n    t0 = time.time()\n    backend = GlinerBackend()\n    try:\n        import torch\n\n        if torch.cuda.is_available():\n            backend.model = backend.model.cuda().eval()\n            print(\"[gliner-worker] running on GPU\", flush=True)\n    except Exception as exc:\n        print(f\"[gliner-worker] GPU unavailable ({exc}); CPU mode\", flush=True)\n    rows = run_backend(backend, cases)\n    out_path.parent.mkdir(parents=True, exist_ok=True)\n    with open(out_path, \"w\", encoding=\"utf-8\", newline=\"\\n\") as fh:\n        for row in rows:\n            fh.write(json.dumps(row.to_dict(), ensure_ascii=False, sort_keys=True) + \"\\n\")\n    errors = sum(1 for r in rows if r.error)\n    print(f\"[gliner-worker] {len(cases)} cases in {time.time()-t0:.0f}s, errors={errors}\", flush=True)\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"

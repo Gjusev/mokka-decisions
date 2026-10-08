@@ -120,4 +120,11 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 ## E13 — Holdout congelado por dominio (frozen v1.0)
 
 - Particiones: los 4 configs de dominio del test pineado (= all/test; agregado ya consultado — exposición declarada; números por dominio jamás usados para ajustar).
-- En ejecución: Julia (motor oficial, CPU) y base_ord (protocolo idéntico) sobre las mismas particiones.
+- Julia (motor oficial, CPU 8 hilos): agent_trace 348/500=0,696 · customer_service 352/500=0,704 · invoice 398/500=0,796 · security 353/500=0,706 · **TOTAL 1.451/2.000=0,7255** — coincide exactamente con la reproducción agregada (integridad de particiones confirmada). Artefactos: `runs/typed-decisions/julia_holdout_domains.json`.
+- base_ord (protocolo idéntico, per-case dump para McNemar emparejado): en ejecución local.
+
+## E14 — H2 épocas extendidas (kernel mokka-typed-ord v2) — EN EJECUCIÓN
+
+- Diagnóstico que lo motiva: las curvas dev NO estaban saturadas — base_ord +2,8 pp en su última época (0,6842→0,7123), small_ord +3,5 pp (0,6088→0,6439). La brecha restante vs Julia (−2,1 pp) puede ser parcialmente de subentrenamiento.
+- Experimento controlado de UNA variable: **typed_ord2** = base_ord con epochs 3→6 (base_ord6) y **typed_small_ord2** = small_ord con epochs 4→8 (small_ord8); datos/inicialización/pérdida ordinal/semillas idénticos.
+- Selección por dev; test histórico solo para el ganador; holdout congelado para el finalista. Cuota GPU verificada antes del push (~17,8 h restantes).
