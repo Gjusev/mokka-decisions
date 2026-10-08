@@ -599,6 +599,11 @@ def stage_typed_e15(bundle: Path, work: Path, config: str, seed: int = 42, arms:
             soft_targets=None if ordinal else soft_targets,
         )
         log(f"{name} trained in {_time.time()-t0:.0f}s best_dev={report['best_dev_accuracy']}")
+        # ponytail: latest.pt (~4.9GB each) filled /kaggle/working with 5 arms in v2;
+        # best+report is all the analysis needs — delete latest after each arm
+        latest = work / name / "checkpoint_latest.pt"
+        if latest.exists():
+            latest.unlink()
         return report
 
     name_c = f"e15_control_s{seed}"
@@ -684,9 +689,66 @@ def stage_typed_e15_seeds(bundle: Path, work: Path, config: str) -> None:
     stage_typed_e15(bundle, work, config, seed=45, arms="probs")
 
 
+def stage_typed_e15_completion(bundle: Path, work: Path, config: str) -> None:
+    """Finish the E15 replication arms lost to working-disk exhaustion in v2.
+
+    v2 recovered: control s43/s44 and probs s43 (complete, collected locally).
+    probs s44 died after epoch 1 and probs s45 never started. Here they rerun
+    from scratch with identical seed/recipe; _arm now deletes checkpoint_latest.pt
+    per arm so 2 arms fit comfortably.
+    """
+    import time as _time
+
+    root = _find_typed_root(bundle)
+    import json as _json
+
+    train = _load(root, "train")
+    dev = _load(root, "dev")
+
+    def _load_probs(split: str) -> dict:
+        return {_json.loads(l)["id"]: _json.loads(l)
+                for l in (root / "cases" / f"probabilities_{split}.jsonl").read_text(encoding="utf-8").splitlines()
+                if l.strip()}
+
+    probs_train = _load_probs("train")
+    qtypes = {_json.loads(l)["id"]: _json.loads(l).get("question_type", "?")
+              for l in (root / "cases" / "train.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()}
+    soft_targets = {}
+    for c in train:
+        if qtypes.get(c.id) == "score":
+            row = probs_train[c.id]
+            assert len(row["probabilities"]) == len(c.options)
+            soft_targets[c.id] = row["probabilities"]
+
+    from mokka_decisions.train import TrainConfig, run_training
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained("jhu-clsp/mmBERT-base")
+    for seed in (44, 45):
+        name = f"e15_probs_s{seed}"
+        cfg = TrainConfig(
+            encoder_name="jhu-clsp/mmBERT-base",
+            max_length=512, microbatch=4, grad_accumulation=8, epochs=3,
+            encoder_lr=2e-5, head_lr=1e-4, seed=seed, amp=True,
+            output_dir=str(work / name), max_options_per_step=32,
+        )
+        t0 = _time.time()
+        report = run_training(cfg, train_cases=train, dev_cases=dev, tokenizer=tokenizer,
+                              soft_targets=soft_targets)
+        log(f"{name} trained in {_time.time()-t0:.0f}s best_dev={report['best_dev_accuracy']}")
+        latest = work / name / "checkpoint_latest.pt"
+        if latest.exists():
+            latest.unlink()
+        (work / "run_status.json").write_text(
+            _json.dumps({"stage": "typed_e15_completion", "arm": name,
+                         "best_dev": report["best_dev_accuracy"]}, indent=2), encoding="utf-8")
+    log("e15_completion: done (probs s44 rerun complete + s45)")
+
+
 STAGES = {"typed_arms": stage_typed_arms, "typed_a1": stage_typed_a1,
           "typed_ord": stage_typed_ord, "typed_small_ord": stage_typed_small_ord,
           "typed_e15": stage_typed_e15, "typed_e15_seeds": stage_typed_e15_seeds,
+          "typed_e15_completion": stage_typed_e15_completion,
           # H2 (controlled, one variable): the dev curves were not saturated at
           # 4/8 epochs; extend epochs only — data/init/loss/seeds unchanged.
           "typed_ord2": lambda b, w, c: stage_typed_ord(b, w, c, epochs=6, out="base_ord6"),

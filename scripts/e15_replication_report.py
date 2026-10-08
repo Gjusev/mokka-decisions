@@ -31,18 +31,27 @@ sys.path.insert(0, str(ROOT / "src"))
 
 V1 = ROOT / "runs/kaggle-typed-e15"
 V2 = ROOT / "runs/kaggle-typed-e15-seeds"
-ARMS = {  # recipe -> {seed: (checkpoint_dir, kernel_results_path, arm_key)}
-    "control": {
-        42: (V1 / "e15_control", V1 / "e15_results.json", "control"),
-        43: (V2 / "e15_control_s43", V2 / "e15_s43_results.json", "control"),
-        44: (V2 / "e15_control_s44", V2 / "e15_s44_results.json", "control"),
-    },
-    "candidate": {
-        42: (V1 / "e15_probs", V1 / "e15_results.json", "candidate"),
-        43: (V2 / "e15_probs_s43", V2 / "e15_s43_results.json", "candidate"),
-        44: (V2 / "e15_probs_s44", V2 / "e15_s44_results.json", "candidate"),
-        45: (V2 / "e15_probs_s45", V2 / "e15_s45_results.json", "candidate"),
-    },
+
+
+def _kernel_dev(ckpt_dir: Path, key: str | None, seed: int) -> float | None:
+    """Kernel-reported best dev: per-seed stage JSON when present, else the
+    arm's own run_report.json (both were written by the kernel session)."""
+    sj = V2 / f"e15_s{seed}_results.json"
+    if sj.exists() and key:
+        try:
+            return json.loads(sj.read_text(encoding="utf-8"))[key]["best_dev_accuracy"]
+        except (KeyError, json.JSONDecodeError):
+            pass
+    rr = ckpt_dir / "run_report.json"
+    if rr.exists():
+        return json.loads(rr.read_text(encoding="utf-8"))["best_dev_accuracy"]
+    return None
+
+
+ARMS = {  # recipe -> {seed: checkpoint_dir}
+    "control": {42: V1 / "e15_control", 43: V2 / "e15_control_s43", 44: V2 / "e15_control_s44"},
+    "candidate": {42: V1 / "e15_probs", 43: V2 / "e15_probs_s43",
+                  44: V2 / "e15_probs_s44", 45: V2 / "e15_probs_s45"},
 }
 DECIDING_SEEDS = (42, 43, 44)
 EXPLORATORY = {45}
@@ -154,7 +163,10 @@ def main() -> int:
             kernel_dev[(recipe, seed)] = kd
 
     report = {"deciding_seeds": list(DECIDING_SEEDS), "exploratory_seeds": list(EXPLORATORY),
-              "per_seed": {}, "paired": {}, "per_type_deltas": {}}
+              "per_seed": {}, "paired": {}, "per_type_deltas": {},
+              "note_v2": "v2 kernel died of working-disk exhaustion mid probs_s44 (epoch 1); "
+                         "s44 candidate + s45 rerun in v3 with per-arm checkpoint_latest cleanup; "
+                         "control s43/s44 + candidate s43 recovered from v2 output"}
     for recipe, seeds in ARMS.items():
         for seed in seeds:
             s = summarize(data[(recipe, seed)])
