@@ -154,3 +154,19 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 - Varianza cross-sesión documentada (hipótesis abierta, sin atribución): base_ord E11 dev 0,7123 vs e15_control 0,6754 — misma receta/semilla, sesiones distintas.
 - Artefactos: runs/kaggle-typed-e15{,-seeds}/ (checkpoints + reportes), runs/typed-decisions/e15_replication_report.json.
 - **Estado**: contribución propia REPLICADA (supervisión nativa del dataset). El finalista (e15_probs), el control y Julia quedan a la espera de la evaluación en el conjunto independiente congelado (data/independent-v1, sellado; protocolo docs/typed-independent-eval-protocol.md) — sin ejecutar hasta revisión del usuario.
+
+## E16 — Evaluación en el conjunto independiente congelado (indep-v1) — CERRADO
+
+- Fijación ANTES de abrir resultados (runs/typed-decisions/independent_fixation.json): finalista e15_probs_s44 (dev 0,6965, sha bc704d80…), control e15_control_s43 (dev 0,6877, sha 99d87f49…), criterio dev pre-registrado; semilla 45 excluida. Manifiesto verificado sin regenerar (casos f6869c4a…, generador eea5b1ff…, 150 casos, seed 20261008). Julia: motor oficial, pesos sha df853bf7….
+- **Resultado global**: finalista 0,3840 · control 0,3467 · Julia **0,4387** (329/750). Todos caen fuertes frente a sus benchmarks — OOD declarado para todos (familías nuevas, etiquetas por regla).
+- **Emparejado por caso (150 grupos)**: finalista−control **+3,73 pp, CI95 [−0,13, +7,60]**, McNemar p=0,107 · finalista−Julia **−5,47 pp [−9,07, −1,73]**, p=0,021 · control−Julia −9,20 pp [−13,07, −5,33], p<0,0001.
+- **Contexto por receta (3 semillas, nunca selección)**: probs 0,343/0,411/0,384 (media 0,379) vs control 0,321/**0,441**/0,347 (media 0,370) — rangos solapados (Δ de medias +0,93 pp); la semilla s44 del CONTROL iguala a Julia. La varianza de semilla en OOD (6,8–12 pp de rango) domina las diferencias entre recetas.
+- Por tipo: Julia gana en **score (0,54 vs ≤0,23 nuestro)** y sensores (0,69); nuestro modelo gana en noul (0,51–0,55 vs 0,45) y el finalista en choice (0,40 vs 0,35). El colapso nuestro en score OOD sugiere que la serialización tipada + type_emb de Julia transfiere mejor las rúbricas ordinales — motivación directa de E17 (arquitectura Julia en Small, en ejecución).
+- NLL/Brier/MAE reportados para nuestros brazos (finalista NLL 1,09 · Brier 0,66 · MAE 1,11); Julia solo acierto (filas sin probabilidades comparables). **Eficiencia: sin mediciones comparables — PENDIENTE, nada deducido de parámetros.**
+
+### Conclusiones separadas (lo pedido)
+
+1. **¿La mejora de E15 se mantiene en casos nuevos?** Parcialmente y NO concluyentemente: el par fijado da +3,73 pp con CI que toca cero; las medias por receta +0,93 pp con rangos solapados. La señal dev (3/3, +1,35 pp) no se transfiere con fuerza a familias nuevas — E15 queda como mejora confirmada en distribución, no confirmada (ni refutada) fuera.
+2. **¿Ventaja frente a Julia en el alcance evaluado?** NO en este conjunto: Julia supera al finalista −5,47 pp [−9,07, −1,73] y al control. Sin ventaja demostrada; sin medición de eficiencia comparable (pendiente). El eje score/rúbricas ordinales es la brecha concreta a atacar (→ E17).
+
+- Sin ajustes post-hoc: fijación previa escrita, resultados negativos conservados íntegros. Artefactos: runs/independent-v1/ (6 percase + julia + independent_report.json).
