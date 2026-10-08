@@ -170,3 +170,18 @@ in `runs/**/run_report.json` and dataset manifests). Nothing here is projected.
 2. **¿Ventaja frente a Julia en el alcance evaluado?** NO en este conjunto: Julia supera al finalista −5,47 pp [−9,07, −1,73] y al control. Sin ventaja demostrada; sin medición de eficiencia comparable (pendiente). El eje score/rúbricas ordinales es la brecha concreta a atacar (→ E17).
 
 - Sin ajustes post-hoc: fijación previa escrita, resultados negativos conservados íntegros. Artefactos: runs/independent-v1/ (6 percase + julia + independent_report.json).
+
+## E17 — Arquitectura Julia fiel en Small: 2×2 arquitectura×supervisión (kernel mokka-typed-julia-small v2) — COMPLETADO
+
+- Puerto fiel de JuliaDecisionModel (Apache-2.0; runs/julia-research/upstream-source pineado; divergencias declaradas: act_head RL y temperatura omitidos). Paridad verificada: serialización idéntica token a token y estructura igual que el upstream real (tests/test_arch_julia_serialization.py, 2 PASS). Incidente v1: wheel obsoleto del bundle → ModuleNotFoundError al arranque (45 s GPU); corregido reversionando el dataset antes de v2.
+- GPU verificada en log (2×T4, cuda true); 465 pasos por brazo (3 épocas completas); mmBERT-small, mismos datos/splits/receta/seed 42 que todos los brazos.
+
+| dev (seed 42) | ordinal artificial | probabilidades nativas |
+|---|---|---|
+| A0-small (pares K) | small_ord **0,6439** (E12) | — |
+| JuliaArch-small (fiel) | julias_ordinal **0,6421** | julias_probs **0,6649** |
+
+- **Efecto arquitectura** (misma supervisión): 0,6421 vs 0,6439 = **−0,18 pp ≈ nulo** (semilla única; dentro del ruido conocido). La arquitectura de Julia NO explica ventaja de calidad dev a igual tamaño/datos/receta.
+- **Efecto supervisión** (dentro de JuliaArch): **+2,28 pp** — la ventaja de las probabilidades nativas REPLICICA en una tercera configuración (ahora variando también la arquitectura). Combinado julias_probs vs small_ord: +2,10 pp.
+- Lectura conjunta con E16: la ventaja restante de Julia está en transferencia OOD de rúbricas score (0,54 vs ≤0,23), no en calidad dev ni en arquitectura medida en dev. Evaluar julias_ordinal/julias_probs en indep-v1 es el test natural de esa hipótesis — checkpoints conservados; NO ejecutado (decisión del usuario).
+- Artefactos: runs/kaggle-typed-julia-small/ (checkpoints_best + run_reports de ambos brazos).
