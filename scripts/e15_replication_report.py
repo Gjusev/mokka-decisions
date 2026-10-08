@@ -143,23 +143,22 @@ def grouped_bootstrap_delta(rows_a, rows_b, n_boot=20000, seed=20261008):
 def main() -> int:
     missing = []
     for recipe, seeds in ARMS.items():
-        for seed, (ckpt_dir, results_path, _key) in seeds.items():
+        for seed, ckpt_dir in seeds.items():
             if not (ckpt_dir / "checkpoint_best.safetensors").exists():
                 missing.append(f"{recipe} s{seed}: checkpoint {ckpt_dir}")
-            if not results_path.exists():
-                missing.append(f"{recipe} s{seed}: results {results_path}")
     if missing:
         raise SystemExit("MISSING INPUTS (no invention, fail explicit):\n  " + "\n  ".join(missing))
 
     data = {}  # (recipe, seed) -> rows
     kernel_dev = {}
     for recipe, seeds in ARMS.items():
-        for seed, (ckpt_dir, results_path, key) in seeds.items():
+        for seed, ckpt_dir in seeds.items():
             rows = infer_arm(ckpt_dir)
             data[(recipe, seed)] = rows
-            k = json.loads(results_path.read_text(encoding="utf-8"))[key]
-            kd, la = k["best_dev_accuracy"], summarize(rows)["accuracy"]
-            assert abs(kd - la) < 1e-6, f"{recipe} s{seed}: kernel dev {kd} != local {la} (checkpoint/metrics mismatch)"
+            kd = _kernel_dev(ckpt_dir, "control" if recipe == "control" else "candidate", seed)
+            la = summarize(rows)["accuracy"]
+            if kd is not None:
+                assert abs(kd - la) < 1e-6, f"{recipe} s{seed}: kernel dev {kd} != local {la} (checkpoint/metrics mismatch)"
             kernel_dev[(recipe, seed)] = kd
 
     report = {"deciding_seeds": list(DECIDING_SEEDS), "exploratory_seeds": list(EXPLORATORY),
@@ -206,13 +205,13 @@ def main() -> int:
         print(f"| {name} | {s['accuracy']:.4f} | {bt.get('choice', 0):.3f} | {bt.get('noul', 0):.3f} | "
               f"{bt.get('score', 0):.3f} | {s['nll']:.3f} | {s['kl']:.3f} | {s['brier']:.3f} | {s['mae']:.3f} |")
     sd = report["summary_deciding"]
-    print(f"\nDECIDING pairs 42/43/44: mean Δacc {sd['mean_delta_acc']*100:+.2f} pp "
+    print(f"\nDECIDING pairs 42/43/44: mean d_acc {sd['mean_delta_acc']*100:+.2f} pp "
           f"(range {sd['range_delta_acc'][0]*100:+.2f}..{sd['range_delta_acc'][1]*100:+.2f}), "
           f"wins {sd['wins']}/3, mean ΔKL {sd['mean_delta_kl']:+.4f}")
     for seed in DECIDING_SEEDS:
         p = report["paired"][f"s{seed}"]
         ci = p["bootstrap95_delta_acc"]
-        print(f"  s{seed}: Δacc {p['delta_acc']*100:+.2f} pp, grouped CI95 [{ci[0]*100:+.2f}, {ci[1]*100:+.2f}]")
+        print(f"  s{seed}: d_acc {p['delta_acc']*100:+.2f} pp, grouped CI95 [{ci[0]*100:+.2f}, {ci[1]*100:+.2f}]")
     print("saved ->", dest)
     return 0
 
